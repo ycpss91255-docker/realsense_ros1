@@ -157,6 +157,101 @@ flowchart LR
   <repo>:devel` 后会看到的内容。
 - `Dockerfile.test-tools` 构建 lint/test 工具集（bats + shellcheck + hadolint）。下游 `test` 阶段通过 `ARG TEST_TOOLS_IMAGE` build arg 引用 — 默认 `test-tools:local`（对应本地 `./build.sh` 流程,把 `Dockerfile.test-tools` 构建到 host Docker daemon）。CI 则覆盖成 `ghcr.io/ycpss91255-docker/test-tools:vX.Y.Z`（由 `.github/workflows/release-test-tools.yaml` 在每次 tag 推的预构建 multi-arch image）,buildx 直接从 registry 拉对应架构的 bats / shellcheck / hadolint binary,避开 `docker-container` buildx driver 跨 step 不共享 image store 的问题。
 
+#### 添加额外 stage（#215）
+
+任何在 baseline blocklist `{sys, base, devel, test}` 之外的
+`FROM <base> AS <stage>`，会被自动 emit 成一个 compose 服务 —
+`extends: devel`（继承 volumes / network / GPU / GUI / cap_add /
+additional_contexts），仅 override `build.target` / `image` /
+`container_name` / `stdin_open` / `tty` / `profiles`。典型用例是
+entrypoint 变体，如 NVIDIA Isaac Sim 在 `devel` 之上的
+`headless` + `gui` 两种启动模式。
+
+User 操作流程：
+
+```dockerfile
+# Dockerfile 加新 stage（不用动 setup.conf）
+FROM devel AS headless
+ENTRYPOINT ["/isaac-sim/runheadless.sh"]
+CMD ["-v"]
+
+FROM devel AS gui
+ENTRYPOINT ["/isaac-sim/runapp.sh"]
+```
+
+```bash
+./build.sh                    # 重新生成 compose.yaml，build 所有 stages
+./run.sh -t headless          # 跑 headless 变体
+./run.sh -t gui               # 跑 gui 变体
+./exec.sh -t headless bash    # 进入 running 的 headless container
+```
+
+约束：
+
+- Stage 名必须符合 `^[a-z][a-z0-9_-]*$` — 大写 / 数字开头 / 点号
+  等会被拒（WARN + 跳过，其他 stage 继续解析）。
+- 撞到 baseline（`sys` / `base` / `devel` / `test`）`setup.sh apply`
+  hard error 退出 1。撞到 template 控制的 image tag namespace
+  （`latest`、`v[0-9]*`）也是 hard error。
+- 添加 / 移除 stage 会触发 `setup.sh check-drift`（通过 `.env` 内
+  的 `SETUP_DOCKERFILE_HASH`），下次 wrapper 跑会自动 regen
+  `compose.yaml`。其他 `RUN apt-get install` 等修改**不会**触发 drift。
+
+#### Per-stage `setup.conf` overrides（#220）
+
+#215 auto-emit 出的 stage 默认共用 devel 的 runtime 设置
+（volumes / GPU / network / GUI）。当某 stage 需要不同的 runtime
+设置 — 例如 NVIDIA Isaac Sim 的 `headless` 跑 WebRTC livestream
+要 `network=bridge` + 一个 port mapping + `gui=off`，但 `devel` 跟
+`gui` 维持 `network=host` + X11 — 在 repo 的 `setup.conf` 加上
+`[stage:<name>]` section：
+
+```ini
+[gui]
+mode = auto
+
+[network]
+mode = host
+
+[stage:headless]
+gui.mode = off
+network.mode = bridge
+network.port_1 = 8080:80
+deploy.gpu_capabilities = gpu compute utility graphics video
+```
+
+也可以用 `./setup_tui.sh` 走交互式编辑：
+
+- **Advanced → Per-stage overrides**：直接进编辑器；该 entry 仅
+  在 Dockerfile 有至少一个非 baseline stage 时才显示。
+- **Features → Per-stage overrides**（#221）：永久可见的功能总
+  览入口；条件已满足时点击等同上述 Advanced 路径，未满足时会
+  弹 msgbox 说明如何启用。
+
+允许 override 的 key（v1）：
+
+| Section | Keys |
+|---|---|
+| `[deploy]` | `gpu_mode`, `gpu_count`, `gpu_capabilities`, `runtime` |
+| `[gui]` | `mode` |
+| `[network]` | `mode`, `ipc`, `network_name`, `port_<N>`, `port_inherit` |
+| `[security]` | `privileged` |
+| `[volumes]` | `mount_<N>`, `mount_inherit` |
+| `[environment]` | `env_<N>`, `env_inherit` |
+
+List 字段（`mount_*` / `port_*` / `env_*`）采 **append-default**：
+stage 的项目附加在 top-level 之后。要完全取代 top-level，设
+`<list>_inherit = false`（例：`volumes.mount_inherit = false`）。
+
+注意事项：
+
+- `[stage:devel]` 是**保留**的 (v1 no-op + WARN)。要调 devel 直接
+  改 top-level section。v2 会重新评估。
+- `[stage:sys|base|test]` 是 **hard error**（baseline collision）。
+- `[stage:foo]` 对应的 stage 在 Dockerfile 不存在 → **WARN + 跳过**
+  （`setup.sh apply` 其他流程继续）。
+- 不在 allowlist 内的 override key → **WARN + 跳过该 key**。
+
 ### Smoke test helpers（供下游 repo 使用）
 
 `test/smoke/test_helper.bash`（每个 smoke spec 通过
@@ -219,20 +314,56 @@ template；没写的 section 则吃 template 默认。
 
 ### 交互式 TUI
 
-`./setup_tui.sh` 打开主菜单，可编辑 6 个 section 的所有值，底层是
-`dialog` 或 `whiptail`（两者都缺时会打印 `sudo apt install dialog`
-提示并退出）。按 Cancel / Esc 不存档离开；存档后会自动调用
-`setup.sh` 重新生成 `.env` + `compose.yaml`。
+`./setup_tui.sh` 打开主菜单。底层是 `dialog` 或 `whiptail`（两者
+都缺时会打印 `sudo apt install dialog` 提示并退出）。按 Cancel /
+Esc 不存档离开；存档后会自动调用 `setup.sh` 重新生成 `.env` +
+`compose.yaml`。
+
+主菜单结构（#221）：
+
+```
+Main
+├─ image            IMAGE_NAME 检测规则
+├─ build            APT mirrors + Dockerfile build args
+├─ Runtime  ──→     network / deploy（GPU）/ gui / environment
+├─ Mounts   ──→     volumes / devices / tmpfs
+├─ Advanced ──→     security / additional_contexts
+│                   / per_stage（条件式）/ Reset
+├─ Features         条件式 / 进阶使用功能总览（含 per_stage 状态）
+└─ Save & Exit
+```
+
+`./setup_tui.sh <section>` 仍可直接跳到任意 section 的编辑器
+（如 `./setup_tui.sh volumes`），不必走主菜单。
 
 ### setup.sh 什么时候运行
 
 `setup.sh` 仅在显式触发时才执行 — 并不会在每次 build / run 都重跑：
 
 - **`./template/init.sh`** 建完骨架自动运行一次
+- **`make upgrade` / `./template/upgrade.sh`** subtree pull 后通过 init.sh
+  再跑一次，所以升级总是会用新版 baseline 重新生成 `.env` / `compose.yaml`
 - **`./build.sh --setup` / `./run.sh --setup`**（或 `-s`）— 用户手动触发重跑；
   有 TTY 时先启动 `setup_tui.sh` 让用户修改 `setup.conf`，无 TTY 时直接调用 `setup.sh`
 - **首次 bootstrap**：`./build.sh` / `./run.sh` 首次执行（`.env` 尚未存在，
   例如 CI 新 clone）会自动走相同的 TTY-aware 流程，不用带 `--setup`
+
+> **Fresh-clone lint 覆盖率（#216）**：`./run.sh` 在本机没 image
+> cached 时会走 Compose auto-build — 但 auto-build **只 build
+> `target: devel`**（或 `-t` 指定的 target），会跳过 `target: test`
+> 那层的 ShellCheck / Hadolint / Bats smoke。`run.sh` 检测到这个情况
+> 会在 `compose up` 前打印一段 `[run] INFO:` 提示（只在 TTY 环境）。
+> 想要一次取得跟 CI 同样的完整验证，加 `--build` flag：
+>
+> ```bash
+> ./build.sh test           # 显式跑 lint + smoke
+> ./run.sh --build          # 跑完 lint + smoke 再 compose up
+> ./run.sh                  # 默认 — 快速路径，跳过 lint/smoke
+> ```
+
+`setup.sh apply` 每次都会从头重新生成 `compose.yaml`，但会保留既有 `.env`
+中的 `WS_PATH` / `APT_MIRROR_UBUNTU` / `APT_MIRROR_DEBIAN`，所以手动调过
+的 workspace 路径或 apt mirror 升级时不会被覆盖。
 
 ### Drift 检测
 
@@ -280,7 +411,9 @@ template；没写的 section 则吃 template 默认。
 - `.env` — runtime 变量 + `SETUP_*` drift metadata
 - `compose.yaml` — 含 baseline 与条件区块的完整 compose
 
-任何时候打开 `compose.yaml` 都能看到当下完整 runtime 配置。
+任何时候打开 `compose.yaml` 都能看到当下完整 runtime 配置。每次
+`make upgrade` 都会重新生成这两个文件（init.sh 在 subtree pull 后重跑
+`setup.sh apply`）— 不要手改，需要 override 写到 `setup.conf`。
 
 ## 快速开始
 
@@ -304,6 +437,10 @@ git subtree add --prefix=template \
 
 ### 升级
 
+前置条件：`git config user.name` / `user.email` 必须有设置，working tree
+不能在进行中的 merge / rebase / cherry-pick / revert — upgrade.sh 会
+fail-fast 并打印可操作信息，避免半套 pull。
+
 ```bash
 # 检查是否有新版
 make upgrade-check
@@ -313,12 +450,35 @@ make upgrade
 
 # 或指定版本
 make upgrade VERSION=v0.3.0
+# 指定的版本若比目前 local 还旧（例如从 v0.12.0-rc1 退回 v0.11.0）会被
+# 视为隐式 downgrade 拒绝（依 SemVer §11）。如果是刻意要 rollback，自
+# 行手改 template/.version。
 
 # 没有 make 时的 fallback
 ./template/upgrade.sh v0.3.0
 ```
 
-`upgrade.sh` 一次完成：`git subtree pull --squash`、post-pull 完整性检查（检测到 destructive FF 会自动 rollback）、`./template/init.sh` 重整 root symlinks、以及 sed `.github/workflows/main.yaml` 里的 `build-worker.yaml@vX.Y.Z` / `release-worker.yaml@vX.Y.Z`。不要手动 `git subtree pull` — sed 与 init 步骤容易漏掉。
+`upgrade.sh` 一次完成：
+
+1. `git subtree pull --prefix=template ... --squash`
+2. Post-pull 完整性检查 — subtree marker（`template/.version`、
+   `template/init.sh`、`template/script/docker/setup.sh`）若不见了会
+   `git reset --hard` rollback（防旧版 `git-subtree.sh` destructive FF）
+3. `./template/init.sh` 重跑：重整 root symlinks（`build.sh` / `run.sh`
+   / `Makefile` …）、把 `.gitignore` 同步到 canonical entry set、
+   `git rm --cached` 已经变成 derived artifact 的旧 tracked 文件（`.env`、
+   `compose.yaml`、…），最后调用 `setup.sh apply` 重新生成 `.env` +
+   `compose.yaml`
+4. `sed` 改写 `.github/workflows/main.yaml` 的
+   `build-worker.yaml@vX.Y.Z` / `release-worker.yaml@vX.Y.Z`
+
+per-repo 文件不会被覆盖：`<repo>/setup.conf` 保留原样、
+`<repo>/config/`（bashrc / tmux / terminator …）也不动 — 若上游
+`template/config/` 自上次 pull 后有变动，upgrade.sh 会打印
+`diff -ruN template/config config` 提示，由你自行 reconcile。
+
+不要手动 `git subtree pull` — 完整性检查、init.sh resync、sed 步骤
+容易漏掉。
 
 #### 自动升版（可选）
 

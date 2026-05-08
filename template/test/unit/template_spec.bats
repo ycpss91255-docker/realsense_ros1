@@ -94,6 +94,27 @@ setup() {
   assert_success
 }
 
+@test "Makefile upgrade-check tolerates upgrade.sh exit 1 (update available)" {
+  # Regression #175: `upgrade.sh --check` exits 1 when an update is
+  # available (documented shell convention so `if ./upgrade.sh --check;
+  # then ...` works). The Makefile recipe must wrap the call so make
+  # treats exit 1 as success — the check itself succeeded, the user-
+  # facing message already conveys the result. Exit codes ≥2 (genuine
+  # failures) still propagate.
+  run grep -E '\./template/upgrade\.sh --check \|\| \[ \$\$\? -eq 1 \]' \
+      /source/script/docker/Makefile
+  assert_success
+}
+
+@test "Makefile.ci upgrade-check tolerates upgrade.sh exit 1 (update available)" {
+  # Same wrap as the downstream Makefile (regression #175). Template's
+  # own `make -f Makefile.ci upgrade-check` was failing on every release
+  # cycle when upstream/downstream diverged.
+  run grep -E '\./upgrade\.sh --check \|\| \[ \$\$\? -eq 1 \]' \
+      /source/Makefile.ci
+  assert_success
+}
+
 # ════════════════════════════════════════════════════════════════════
 # Structure: test directory layout
 # ════════════════════════════════════════════════════════════════════
@@ -961,6 +982,39 @@ EOF
   # Legacy tag reference must be gone:
   run grep -c 'COPY --from=test-tools:local' "${_df}"
   assert_output "0"
+}
+
+# ════════════════════════════════════════════════════════════════════
+# Dockerfile.example: ENV alignment with downstream fleet (#210)
+#
+# All 17 hand-written downstream Dockerfiles declare ENV TZ +
+# ENV LANGUAGE alongside ENV LC_ALL / ENV LANG. Pre-#210 the seed
+# Dockerfile.example only had LC_ALL / LANG; downstream-derived images
+# from `/new-repo` therefore silently differed from the fleet on
+# runtime $TZ and $LANGUAGE. The gap surfaces only for consumers that
+# read the env directly (Python tzlocal, gettext fallback, some JVM
+# tz resolution paths), but new repos should match the fleet.
+# ════════════════════════════════════════════════════════════════════
+
+@test "Dockerfile.example declares ENV TZ (matches downstream fleet, #210)" {
+  local _df="/source/dockerfile/Dockerfile.example"
+  [[ -f "${_df}" ]] || skip "Dockerfile.example not present in /source"
+  # Forwards the build-time ARG TZ value into a runtime env. ENV without
+  # an explicit value would inherit the ARG, which is what we want — the
+  # exact spelling the test locks is `ENV TZ="${TZ}"` to mirror how the
+  # 17 downstream Dockerfiles spell it.
+  run grep -E '^ENV TZ="\$\{TZ\}"$' "${_df}"
+  assert_success
+}
+
+@test "Dockerfile.example declares ENV LANGUAGE=en_US:en (matches downstream fleet, #210)" {
+  local _df="/source/dockerfile/Dockerfile.example"
+  [[ -f "${_df}" ]] || skip "Dockerfile.example not present in /source"
+  # Same value the 17 downstream Dockerfiles use; gettext fallback uses
+  # $LANGUAGE in addition to $LANG so unset means the fallback chain
+  # collapses to en_US only.
+  run grep -E '^ENV LANGUAGE="en_US:en"$' "${_df}"
+  assert_success
 }
 
 # ════════════════════════════════════════════════════════════════════

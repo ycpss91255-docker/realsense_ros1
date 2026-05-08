@@ -7,6 +7,238 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.20.1] - 2026-05-08
+
+### Fixed
+- **`setup.conf [environment] env_N` cross-reference now expands**
+  (#236). When a later `env_N` value references an earlier sibling KEY
+  via `${KEY}`, `setup.sh` now substitutes the earlier sibling's value
+  before emitting to `compose.yaml`. Previously the literal `${KEY}`
+  shipped to compose, and compose's own `${VAR}` substitution does NOT
+  consult sibling environment entries -- the container saw the
+  unexpanded form (e.g. `LD_LIBRARY_PATH=/foo//lib` after declaring
+  `ROS_DISTRO=humble` and `LD_LIBRARY_PATH=/foo/${ROS_DISTRO}/lib`).
+  Order-sensitive: forward references and unknown names stay literal
+  so compose's substitution layer (`.env` / shell env) gets a chance
+  at file-load time. Transitive references resolve through the chain
+  (env_3 sees the fully-expanded env_2). Implementation: new
+  `_expand_env_cross_refs` helper called from `generate_compose_yaml`
+  before the env block emits. 5 new unit tests in
+  `test/unit/compose_gen_spec.bats` cover basic / forward / unknown /
+  multi-ref / transitive cases.
+
+## [v0.20.0] - 2026-05-08
+
+Promoted from `v0.20.0-rc1` (#234) — RC tag CI was green; no fixups needed.
+
+### Added
+- **`publish-worker.yaml` reusable workflow** (#232). Opt-in
+  workflow_call entry point that pushes a Dockerfile target stage
+  (default `devel`) to a container registry (default `ghcr.io`) on
+  tag push. Inputs mirror `build-worker.yaml` (`image_name`,
+  `build_args`, `context_path`, `dockerfile_path`, `build_contexts`,
+  `platforms`, `test_tools_version`) plus publish-specific knobs
+  (`tag_suffix`, `is_latest`, `registry`, `target`). Default behavior
+  for existing repos is unchanged: only repos that explicitly add a
+  `call-publish` job in their `main.yaml` publish images. Designed
+  for foundational image repos (`ros_distro`, `ros2_distro`) so app
+  repos can `FROM ghcr.io/<org>/ros_distro:vX.Y.Z-<variant>` instead
+  of duplicating sys / base / devel layers per repo. Auth uses
+  `GITHUB_TOKEN` for GHCR; multi-arch via `platforms: linux/amd64,linux/arm64`
+  publishes a single multi-arch manifest list under each tag.
+  Documented under "CI Reusable Workflows" in template README with
+  full input table and caller example.
+
+## [v0.19.0] - 2026-05-07
+
+Promoted from `v0.19.0-rc1` (#228) — RC tag CI was green; no fixups needed.
+
+### Changed
+- **`setup_tui.sh` main menu restructured into 5 grouped entries + `Features` discoverability surface** (#221). Top-level main now shows `image`, `build`, `runtime`, `mounts`, `advanced`, `features`, `Save & Exit` — replacing the previous flat list of 5 runtime/mount sections + `advanced` mixed at the same level. `runtime` (network / GPU / display / env vars) and `mounts` (volumes / devices / tmpfs) are sub-menu groupers; `image` and `build` get promoted from Advanced because they are commonly tweaked when wiring a new repo. Advanced is slimmed to truly-advanced knobs (security, named build contexts, conditional per-stage overrides, Reset). The new `features` entry is permanently visible and lists conditional / power-user features with a status row (today: `Per-stage overrides — enabled (N stages)` when a non-baseline `FROM ... AS <name>` exists, otherwise `— hidden (no non-baseline stages)`); clicking the disabled row pops a msgbox explaining how to enable, clicking the enabled row drills into the same editor as the conditional Advanced entry. No semantic change to any underlying section editor — every existing `_edit_section_*` is reachable via the new layout.
+
+### Added
+- 12 i18n keys × 4 languages for the new menu structure: `main.runtime` / `main.mounts` / `main.features`, `runtime.title` / `.menu` / `.back`, `mounts.title` / `.menu` / `.back`, `features.title` / `.menu` / `.back`, `features.per_stage_enabled` / `features.per_stage_hidden` / `features.per_stage_hidden_info`.
+
+## [v0.18.2] - 2026-05-07
+
+Patch release that ships **the correct `.version` metadata** for the work that landed under the v0.18.0 / v0.18.1 git tags. Both prior tags shipped without the standard `chore: release` step, so their tagged commits still carried `.version = v0.17.0`. Downstream consumers ended up with a stale `template/.version` after `make upgrade`, which made `make upgrade-check` perpetually report "upgrade available". Functionally those tags were correct (workflows, scripts, tests all matched their version), but the metadata file lied.
+
+This release contains **no functional change vs v0.18.1**. Only `.version` and CHANGELOG bookkeeping. Downstream upgrade to v0.18.2 is a metadata-only refresh: same template content, same `main.yaml` `@v0.18.x` reusable workflow surface (modulo the `@tag` bump itself), and the local `template/.version` finally agrees with what the agent actually consumed.
+
+Process gap that caused this is tracked in claude-workspace #36 (added `check_tag_version_consistency.sh` PreToolUse hook and a `Process discipline` section in CLAUDE.md so the same mistake cannot repeat — `git tag v*` is now blocked when the repo's `.version` file does not match the tag name).
+
+### Fixed
+- **`.version` file bumped to match the tag** (refs claude-workspace#36). Prior tags v0.18.0 and v0.18.1 carried `.version = v0.17.0`. Pinned consumers of those tags ended up with a stale local `template/.version`; `make upgrade-check` would loop "upgrade available" forever. v0.18.2 ships `.version = v0.18.2` so the loop terminates and `cat template/.version` agrees with the ref users pulled from.
+
+### Added (v0.18.0 + v0.18.1 -- carried forward, no functional change in v0.18.2)
+- See [v0.18.1](#v0181---2026-05-06) for the per-stage `[stage:<name>]` overrides feature, the standalone-emit fix, and the `--help` / `--lang` argument-order fix.
+
+## [v0.18.1] - 2026-05-06
+
+> Tagged with stale `.version = v0.17.0`. Functionally correct but metadata-only fix in v0.18.2 -- prefer v0.18.2 for new consumers.
+
+### Fixed
+- **`[stage:<name>]` per-stage list overrides now actually replace devel's lists at runtime** (#220 follow-up; v0.18.0 had this gap, fixed in v0.18.1). compose `extends` MERGES list fields (`volumes` / `environment` / `ports` / `cap_add` / `deploy.devices`) by appending child entries to parent's, not replacing them — so the v0.18.0 emit pattern of "minimal `extends: devel` + override list block in stage" left devel's X11 mount + DISPLAY env intact even when the stage set `gui.mode = off`. Confirmed via Isaac Sim headless validation: `docker compose --profile headless config` showed `/tmp/.X11-unix` and `DISPLAY` inherited despite the stage's `gui.mode = off`, and kit emitted the exact `X11 connection rejected because of wrong authentication` warning the issue body called out. Fix: when a stage has any list-affecting override (`gui.mode` change, or any `volumes.mount_*` / `environment.env_*` / `network.port_*` / `*_inherit = false`), emit a **standalone** service block (no `extends: devel`). Top-level fields not yet in the per-stage allowlist (`cap_add` / `cap_drop` / `security_opt` / `devices` / `cgroup_rules` / `tmpfs`) are re-emitted from top-level so the stage still inherits those by default. Cost: a stage with even a single scalar override now produces ~150 lines of compose.yaml instead of ~10; compose.yaml is auto-generated, so the verbosity is fine. v0.18.0 stable tag is left as-is for record-keeping; users should upgrade to v0.18.1 to get the fix. Updated 3 integration tests + 1 new test (`stage-override: standalone emit re-emits cap_add / runtime / privileged inherited from devel`).
+- **`build.sh` / `run.sh` / `exec.sh` / `stop.sh` `--help` now respects `--lang` regardless of argument order** (#222). Previously `<script> --help --lang zh-TW` printed English usage because `usage()` exited via `-h|--help` before the main parse loop reached `--lang`. The reverse order (`--lang` first) worked. Fix: a one-pass scan in each `main()` resolves `--lang` (and via the existing `_sanitize_lang` machinery, `SETUP_LANG`) before the canonical parse loop runs, so both orderings produce the localised usage. Flag surface unchanged. 9 new smoke-test rows in `test/smoke/script_help.bats` (zh-TW / zh-CN / ja across the four scripts).
+
+### Added
+- **Per-stage `setup.conf` overrides for runtime knobs** (#220). `[stage:<name>]` sections in `<repo>/setup.conf` override top-level settings on a per-stage basis when a corresponding `FROM ... AS <name>` stage exists in the Dockerfile (auto-emitted via #215). Driving use case: NVIDIA Isaac Sim's three-stage shape (`devel` for interactive dev with X11, `headless` for WebRTC livestream that needs `mode=bridge` + ports + GPU `video` capability + `gui=off`, `gui` for local-display that needs `gui=auto`) — previously all three stages shared one set of runtime knobs from top-level. Allowlist (v1):
+  - `[deploy]` whole section: `gpu_mode`, `gpu_count`, `gpu_capabilities`, `runtime`
+  - `[gui] mode`
+  - `[network]` whole section: `mode`, `ipc`, `network_name`, `port_<N>` + `port_inherit` meta-key
+  - `[security] privileged`
+  - `[volumes] mount_<N>` + `mount_inherit` meta-key
+  - `[environment] env_<N>` + `env_inherit` meta-key
+  - Excluded by design: `[image_name]` (image tag is one per image, not per-stage), `apt_mirror_*` (build-time, not runtime), other `[security]` keys (no driving use case yet — re-evaluate v2).
+- **Append-default + opt-out merge semantics for list fields**: stage's `mount_*` / `port_*` / `env_*` items append to top-level by default; setting `<list>_inherit = false` switches to replace mode (drop top-level entries entirely). Reverse toggle preserves the stage's own entries in `setup.conf` so flipping back to inherit doesn't lose typed values.
+- **Stage section validator**: `[stage:sys|base|test]` is hard-error (baseline collision); `[stage:devel]` is reserved (v1 no-op, WARN; revisit in v2 — devel emits via env-var refs `${NETWORK_MODE}` / `${PRIVILEGED}` / `${IPC_MODE}` so override semantics are non-trivial); `[stage:foo]` referencing a stage absent from the Dockerfile is WARN + skipped; override keys outside the v1 allowlist are WARN + skipped per-key. 2 new 4-language i18n keys (`stage_unknown_referenced`, `stage_override_key_not_allowed`) supplementing #215's existing 3 keys.
+- **TUI integration in `setup_tui.sh`**: new "Per-stage overrides" entry under the Advanced menu, **only shown when the Dockerfile has at least one non-baseline stage** — zero noise for the 17 existing downstream repos. Submenu structure: stage list (with override-count label) → per-stage section picker (gui / deploy / network / volumes / environment) → typed editors for scalars and the existing list editor for `mount_*` / `port_*` / `env_*` plus an inherit-toggle row. ~14 new TUI i18n keys × 4 languages. Menu placement / restructure (potentially promoting per-stage to main menu after user feedback) tracked separately in #221.
+- **`_tui_conf.sh` writer extended to append NEW sections**: previously `_write_setup_conf` only handled overrides for sections present in the template. The first time a user adds `[stage:headless]` via TUI Save, the section is brand new; the writer now tracks template sections separately and appends new ones (with their keys, in user-input order) at end-of-file. Reader (`_load_setup_conf_full`) already handled stage sections via generic `<section>.<key>` namespacing — no change needed there.
+- **Compose-emit integration**: `generate_compose_yaml` validates `[stage:*]` sections after Dockerfile-stage validation, then for each non-baseline stage with overrides, emits the resolved effective values as inline overrides on top of the existing `extends: devel` block. Stages with no overrides keep the byte-for-byte identical zero-diff path from v0.17.0 (#215). gui changes force `environment:` + `volumes:` re-emit (compose extends's child-replaces-list semantics drop X11 baseline cleanly). gpu mode flip-on with new caps re-emits the `deploy:` block; v1 limitation: turning gpu off when devel has it on isn't representable via compose extends and is documented as deferred to v2.
+
+### Tests
+- Total: **1011 tests** (957 unit + 54 integration). 42 new tests since v0.17.0:
+  - `setup_spec.bats` +27: 20 helper unit tests (`_parse_stage_sections` / `_load_stage_overrides` / `_validate_stage_override_key` allowlist / `_resolve_stage_scalar` / `_resolve_stage_list` append-replace + ordering + meta-key skip) + 7 compose-emit integration tests (zero-diff regression, gui.mode=off strips X11, network.mode=bridge + ports, volumes.mount_inherit=false replaces, orphan WARN, disallowed-key WARN, `[stage:sys]` hard-error).
+  - `tui_spec.bats` +5: stage round-trip via `_load_setup_conf_full` / `_write_setup_conf` (namespaced load, append new section, multi-section, full round-trip, in-place update).
+  - `tui_flow.bats` +10: `_list_dockerfile_stages_available` / `_count_stage_overrides` / `_edit_stage_gui` / `_edit_stage_scalar` / `_edit_stage_list` (inherit toggle + add).
+
+## [v0.17.0] - 2026-05-06
+
+Minor release bundling two `setup.sh` / `run.sh` feature additions plus
+two UX polish items. Notable behavior change: `setup.sh`'s hardcoded
+`runtime` detection from v0.10.0 (#108) is removed in favor of a
+generalized stage auto-emit path (#215). `runtime` still works (it's
+not in the new baseline blocklist), but the implementation surface is
+different, hence the minor bump.
+
+The 17 existing downstream repos have no `FROM ... AS <name>` stages
+beyond the baseline `{sys, base, devel, test}` (plus the optional
+`runtime` for `app/ros1_bridge`), so this release is no-op for their
+runtime behavior — `make upgrade` just refreshes the template subtree
+and the workflow `@tag` refs. New repos seeded by `/new-repo` after
+this tag pick up the auto-emit + `--build` UX automatically.
+
+### Added
+- **Auto-emit any non-baseline Dockerfile stage as a compose service** (#215, generalizes #108). `setup.sh` now parses every `FROM ... AS <stage>` line in the user's Dockerfile and, for any stage outside the baseline blocklist `{sys, base, devel, test}`, emits a corresponding compose service that `extends: devel` (inherits volumes / network / GPU / GUI / cap_add / additional_contexts) and overrides only `build.target` / `image` / `container_name` / `stdin_open` / `tty` / `profiles`. Use case: NVIDIA Isaac Sim's `headless` + `gui` entrypoint variants on top of `devel`. User flow: edit Dockerfile to add `FROM devel AS headless ENTRYPOINT [...]`, run any wrapper, then `./run.sh -t headless`. No `setup.conf` change required — Dockerfile is the single source of truth.
+  - **Stage name validator** (`_validate_stage_name`): rejects baseline collision (`sys` / `base` / `devel` / `test` → hard error, exit 1) and reserved image-tag namespace (`latest`, `v[0-9]*` → hard error). Invalid format (uppercase, leading digit, etc.) is WARN + skip with the rest of the parse continuing. 3 new 4-language i18n keys (`stage_invalid_format` / `stage_baseline_collision` / `stage_reserved_tag`).
+  - **Dockerfile drift hash** (`SETUP_DOCKERFILE_HASH` in `.env`): hashes just the stage-list projection (`^FROM ... AS <stage>` lines), so adding / removing a stage triggers `setup.sh check-drift` exit 1 (regenerate compose.yaml), but unrelated `RUN apt-get install` edits do not. Stored separately from `SETUP_CONF_HASH` so drift logs identify which source-of-truth changed.
+  - **`runtime` stage no longer special-cased**: the v0.10.0 hardcoded `^FROM ... AS runtime$` detection (#108) is removed. `runtime` falls through the same auto-emit path as any other non-baseline stage (it's not in the blocklist), preserving its behavior with no regressions for repos that rely on it.
+- **`run.sh` soft guard + `--build` opt-in for fresh-clone lint/smoke parity** (#216). On a fresh clone with no image cached locally, `./run.sh` previously fell through to Compose's auto-build, which only walks `target: devel` (or whatever `-t` says) and silently bypasses the `target: test` stage where ShellCheck / Hadolint / Bats smoke run. New contributors who reach for `./run.sh` first landed in a working dev container without ever hitting any of the lint/smoke gates that `./build.sh test` enforces — until CI failed downstream. Two changes:
+  - **Default behavior — soft guard**: when the image is absent locally AND stderr is a terminal, print a 3-line `[run] INFO:` block before invoking `compose up` so the user knows the auto-build will skip lint/smoke and learns about `./build.sh test` / `./run.sh --build`. No behavior change. Suppressed when stderr is not a TTY (CI / cron / piped invocations stay clean). The image inspect is parameterized on `${TARGET}` so `./run.sh -t headless` checks `${IMAGE_NAME}:headless`, not `:devel` — important under #215 auto-emitted stages. New 4-language i18n keys (`auto_build_image_missing` / `auto_build_skips_lint` / `auto_build_full_hint`).
+  - **Opt-in `--build` flag**: invokes `./build.sh test` (full lint + smoke chain) before `compose up`, ordered after `check-drift` so the build runs against freshly-regenerated `.env` / `compose.yaml`. For users who want one-command bootstrap with full local-CI parity. New `pre_build_invoking` i18n key.
+  - **Option 4 (default fallback to `./build.sh test`) explicitly rejected** — would silently turn fresh-clone first-run from a few seconds into multiple minutes; that breaks user expectations more than the gap it fixes.
+- **`build.sh` / `run.sh` config summary now prints a `Variables` block** mapping `setup.conf` `[volumes]` placeholders (`${USER_NAME}` / `${USER_UID}` / `${USER_GROUP}` / `${USER_GID}` / `${WS_PATH}`) to their detected runtime values. Pre-fix the Identity block showed resolved values under translated labels (`使用者 : alice` / `工作區 : /home/alice/work`), while the `setup.conf` dump printed the raw `${USER_NAME}` / `${WS_PATH}` placeholders, leaving the user to derive the substitution table. The new block sits between Identity and `setup.conf` in `_print_config_summary` and gives an explicit one-line-per-variable map. setup.conf stays the source of truth (placeholder form unchanged); the block adds 5 more lines to the printout. Coverage: 2 new unit tests in `lib_spec.bats` (populated case + unset-fallback case) and a new `variables` i18n key (en / zh-TW / zh-CN / ja).
+
+### Documentation
+- **`doc/test/TEST.md` cleanup**: removed 7 stale rows referencing tests that no longer exist (all referencing the obsolete `template/VERSION` / `.template_version` migration completed in v0.16) and renamed 5 rows whose underlying test was renamed (e.g. `_create_symlinks: produces all five docker-script symlinks` → `…all seven docker-script symlinks`, `_detect_template_version: reads VERSION file when present` → `…reads .version file when present`). Added a 27-test `## Smoke Tests` section documenting `test/smoke/script_help.bats` (16) and `test/smoke/display_env.bats` (11), which run at Dockerfile `test`-stage build time and are intentionally excluded from the headline self-test count. Headline now carries an explicit note clarifying scope. No code change.
+
+### Tests
+- Total: **969 tests** (915 unit + 54 integration). 34 new tests landed since v0.16.2 — 26 in `setup_spec.bats` (4 validator + 6 parser + 5 hash + 11 emit-loop integration for #215) and 8 in `run_sh_spec.bats` (#216 soft guard + `--build`).
+
+## [v0.16.2] - 2026-05-04
+
+Patch release. Single seed-template alignment fix for `Dockerfile.example`.
+Existing 17 downstream repos are unaffected (`make upgrade` does not touch
+downstream root Dockerfiles, and they already declare both ENVs); this only
+matters for new repos seeded by `/new-repo` going forward.
+
+### Changed
+- **`Dockerfile.example` adds `ENV TZ` and `ENV LANGUAGE` to align with downstream fleet** (#210). All 17 hand-written downstream Dockerfiles already declare `ENV TZ="${TZ}"` and `ENV LANGUAGE="en_US:en"` alongside `ENV LC_ALL` / `ENV LANG`; the seed `Dockerfile.example` only had the latter pair. Pre-fix, new repos generated by `/new-repo` silently differed from the fleet on these two runtime env vars — the gap surfaces only for consumers that read the env directly (Python `tzlocal`, `gettext` translation fallback that uses `$LANGUAGE`, certain JVM tz resolution paths). The build-time `${TZ}` ARG handling and `/etc/timezone` write are unchanged. Coverage: 2 new structural tests in `template_spec.bats` lock the ENV declarations in the seed.
+
+## [v0.16.1] - 2026-05-04
+
+Patch release. Two CI plumbing fixes that surfaced from `seggpt`'s
+v0.16.0 adoption — neither breaks the 17 existing downstreams (their
+CI was already passing), but both unblock new repos using
+`Dockerfile.example` verbatim or `setup.conf [additional_contexts]`.
+
+### Added
+- **`build-worker.yaml` accepts `build_contexts` input forwarding to `docker/build-push-action`'s `build-contexts:`** (#207). v0.16.0 (#199) added compose's `additional_contexts:` so that local `./build.sh` (which goes through `docker compose build`) could use named contexts in `Dockerfile` `COPY --from=<name>` lines. CI bypassed compose entirely — `build-worker.yaml` calls `docker/build-push-action@v7` directly — so the same `setup.conf [additional_contexts]` entry that worked locally failed in CI with `failed to resolve source metadata: no source for '<name>'`. Fix: new `build_contexts` workflow input (default `""`) plumbs caller-supplied `<name>=<location>` pairs into all 3 build steps' `build-contexts:` field. Caller usage: `with: build_contexts: \|\n  repo_root=.`. Path semantics differ from compose's `additional_contexts:` because `docker/build-push-action` resolves `build-contexts:` paths relative to the repo root (the `actions/checkout` working dir), NOT to `context:` — so a caller using `context_path: docker` writes `repo_root=.` here even though the same context in `setup.conf` is `repo_root=..`. Default empty preserves zero-diff for existing callers. Coverage: 3 new `build_worker_yaml_spec.bats` tests (input declaration, 3-step plumbing, zero-diff default).
+
+### Fixed
+- **`build-worker.yaml` user build-args now match `Dockerfile.example` sys-stage names** (#198). Pre-fix the workflow passed `USER=ci` / `GROUP=ci` / `UID=1000` / `GID=1000` (short form) to all 3 `docker/build-push-action` calls, while `Dockerfile.example`'s sys stage `useradd` reads `USER_NAME` / `USER_GROUP` / `USER_UID` / `USER_GID` (long form, also what the same workflow's "Generate .env" step writes). Result: `useradd` created `user` (the Dockerfile default), but the devel stage's `ARG USER="${USER_NAME}"` got overridden by the build-arg `USER=ci` so `USER "${USER}"` switched the image to UID-with-no-passwd-entry, exploding any subsequent `RUN` that resolved the username — `seggpt`'s CI hit `unable to find user ci: no matching entries in passwd file`. Fix: rename the 12 build-args lines (3 steps × 4 args) to long form so they hit the Dockerfile's sys-stage ARGs directly. No downstream Dockerfile change required (every existing `Dockerfile.example`-derived Dockerfile already declares the long-form ARGs). Coverage: 5 new `build_worker_yaml_spec.bats` tests lock the long-form invariant + assert no short-form regression.
+
+## [v0.16.0] - 2026-04-30
+
+Minor release bundling three setup.conf-area changes. Includes a
+**BREAKING** restructure: `setup.conf.local` (introduced in #174) is
+gone — the user override now lives at `<repo>/setup.conf` (committed,
+not gitignored). Run `.claude/scripts/migrate-local-to-setupconf.sh`
+on each repo before upgrading, or rename the file by hand.
+
+### Changed
+- **BREAKING: collapsed `setup.conf.local` + `setup.conf` snapshot back to a single `<repo>/setup.conf` user-override file** (#201). The post-#174 3-file model (`template/setup.conf` defaults + `<repo>/setup.conf` derived snapshot + `<repo>/setup.conf.local` user override) was redundant — the snapshot had no semantic effect on reads (`_load_setup_conf` only consulted `.local` + template), and a real bug fell out of the gap: bootstrap wrote `mount_1` to `<repo>/setup.conf` and immediately reloaded via a path that ignored that file, so a fresh `setup.sh apply` against an empty directory produced a `compose.yaml` with no workspace mount. The 2-file model is the pre-#174 layout with one critical addition kept from #174: bootstrap writes the **portable** form `${WS_PATH}:/home/${USER_NAME}/work` (not an absolute host path), so committing `<repo>/setup.conf` no longer leaks per-machine paths into git history. Surface area: `_load_setup_conf` now reads `<repo>/setup.conf` → falls back to `template/setup.conf`; `_compute_conf_hash` hashes the same pair; `setup.sh set / add / remove` write to `<repo>/setup.conf`; `setup.sh reset` backs up + clears `<repo>/setup.conf` only (no more `.local` to clear); the TUI saves to `<repo>/setup.conf`; `script/docker/lib/gitignore.sh` removes `setup.conf` from the canonical entries (it is now a tracked file) and adds `setup.conf.local` (so leftover `.local` files from earlier installs don't accidentally re-appear in commits); `init.sh` drops the now-obsolete `_migrate_setup_conf_to_local` helper; `upgrade.sh` adds `_warn_setup_conf_drift` mirroring `_warn_config_drift` so users see when upstream `template/setup.conf` adds new sections / keys and can opt into them by hand-merging into `<repo>/setup.conf`. Migration: `.claude/scripts/migrate-local-to-setupconf.sh` (one-shot, deletes after the v0.16.x cycle) renames each downstream repo's `setup.conf.local` to `setup.conf` and stages the diff; the same `init.sh` resync that would run on the next template upgrade then drops the old `setup.conf` line from `.gitignore` and adds `setup.conf.local`.
+
+### Fixed
+- **Bootstrap workspace mount no longer lost on fresh `setup.sh apply`** (#201). Pre-#201 a fresh `apply` against an empty directory wrote `mount_1 = ${WS_PATH}:/home/${USER_NAME}/work` to a file (`<repo>/setup.conf`) that the next reload step ignored, so `compose.yaml` ended up without the workspace mount. Post-#201 the same write target is the read source, so the mount lands in `compose.yaml` on first apply. Locked in by a new `setup_spec.bats` regression test that mkdir's an empty dir, runs `main apply`, and asserts the `${WS_PATH}:/home/${USER_NAME}/work` line appears in the generated compose.
+
+### Added
+- **`[additional_contexts]` section in `setup.conf` for compose's `build.additional_contexts`** (#199). Lets repos that keep source / `pyproject.toml` at the repo root (while docker assets live under a `docker/` subfolder) pull files into the build context without flipping the main `context:` root. Each `context_N = <name>=<source>` entry forwards to compose under every service that has its own `build:` (devel / runtime / test); empty list emits no `additional_contexts:` block, so the 17 existing downstream repos see zero diff. Inside the Dockerfile, reference the named context with `COPY --from=<name>` or `FROM <name> AS <stage>`. `<source>` accepts anything BuildKit takes — relative paths (`..`, `../third_party`), `docker-image://`, `https://`, `oci-layout://`. Use case: `ycpss91255-docker/seggpt` wants to `pip install -e .` at build time, baking the Python package into the image instead of relying on a runtime entrypoint install. Also adds: a `setup_tui.sh` flow under the Advanced menu for managing entries (mirrors the existing volumes / env list editor with the same add / edit / remove / cancel paths), `_validate_additional_context` validator (`<name>` matches BuildKit's named-context naming, `<source>` must be non-empty), 4-language i18n entries (en / zh-TW / zh-CN / ja). Coverage: 6 new unit tests for the parser + compose emission (`setup_spec.bats`), 5 for the validator (`tui_spec.bats`), 9 for the TUI flow (`tui_flow.bats`).
+
+### Tests
+- **Per-section setup.conf parameter end-to-end coverage** (#202). 25 new tests that set a single key in `<repo>/setup.conf`, run `main apply`, and assert the corresponding line appears in `compose.yaml` or `.env`. Companion negative tests confirm the block is omitted when the key is empty / cleared. Sections newly covered: `[deploy]` (gpu_mode/count/capabilities/runtime), `[gui]` (mode), `[network]` (mode/ipc/network_name/port_*), `[resources]` (shm_size), `[environment]` (env_*), `[tmpfs]` (tmpfs_*), `[devices]` (device_*/cgroup_rule_*), plus extras for `[volumes]` mount_2..N and `[security]` privileged. Existing coverage (untouched): `[image]` rule engine, `[build]` arg_N / target_arch / network, `[security]` cap_add / security_opt fallback, `[volumes]` mount_1 workspace, `[additional_contexts]` parse + emit. 923 tests total (869 unit + 54 integration).
+
+## [v0.15.0] - 2026-04-30
+
+Minor release. Single feature: nested Dockerfile support in the
+`build-worker.yaml` reusable workflow (#195). Backwards compatible —
+the 17 existing downstream repos see no CI change unless they opt
+in by adding `with: context_path: <subdir>` to their main.yaml.
+
+### Added
+- **`build-worker.yaml` accepts `context_path` / `dockerfile_path` inputs** (#195). Lets downstream repos that nest their docker assets in a subdirectory (e.g. `docker/Dockerfile`, `docker/compose.yaml`) call the reusable workflow with `with: context_path: docker` instead of being forced to keep the Dockerfile at repo root. Both inputs default to current behaviour (`context_path: "."`, `dockerfile_path: ""` → falls back to `<context_path>/Dockerfile`), so the 17 existing downstream repos see no CI change. Use case discovered while migrating `ycpss91255-docker/seggpt`, where the docker environment lives under `seggpt/docker/` to keep template-managed files separate from `src/` and `test/`. Three new `test/unit/build_worker_yaml_spec.bats` tests lock the input forwarding so a future refactor can't silently revert one of the 3 build steps.
+
+## [v0.14.0] - 2026-04-29
+
+Minor release. Two test / quality follow-ups on top of v0.13.0, no
+behavior changes for downstream consumers (the new WARN level on the
+template-default fallback notice is the only user-visible surface
+shift, and matches what the existing log-text already implied).
+
+### Added
+- **`test/unit/tui_flow.bats` lifts `setup_tui.sh` coverage from 18% to 83%** (#189). 44 new interactive-flow tests covering the 5 high-value areas the issue body called out: `_edit_image_rule` + `_compact_image_rules_after_remove` (#177 regression site), `_render_main_menu` / `_render_advanced_menu` (#178 Save & Exit unification), `_edit_list_section` mount/env/port CRUD, Save & Exit / Cancel / Esc abort handling, plus `_swap_image_rule` and several `_edit_section_*` dispatches. Same mock-driven pattern as `tui_backend_spec.bats` — file-backed queue stubs the dialog wrappers (queue line popped via `head -n 1` + `sed -i 1d` so state survives `$(...)` subshell calls), each test scripts the user's click path and asserts on `_TUI_OVR_*` / `_TUI_REMOVED` / `_TUI_CURRENT` outcomes. No real `dialog` / `whiptail` ever launches.
+
+### Changed
+- **`setup_tui.sh` 4-language i18n tables expanded to per-key assignments** (#189 prerequisite). The previous `declare -gA _TUI_MSG_<LANG>=([k]=v ... [k]=v)` literal blocks (~600 lines across en / zh-TW / zh-CN / ja) compiled into a single statement under kcov, so individual entries showed as 0 hits even when reached and capped achievable per-file coverage at ~45%. Each entry is now its own `_TUI_MSG_<LANG>[k]=v` assignment line, which kcov tracks separately. Runtime behavior is identical — `_tui_msg` still does the same associative-array lookup with English fallback. This is what makes the #189 >=70% target reachable; with the new tests the file lands at 83.29% (897 / 1077 lines).
+- **CI `make` package added to the kcov coverage container's apt-install list**. The downstream-Makefile integration tests added in #175 / #182 (`make upgrade-check (downstream Makefile): exit 0 when ...`) shelled out to a `make` binary that the `kcov/kcov` image's apt repo doesn't ship by default, so they exited 127 only under `make coverage` even though they passed under `make test` (where the alpine test-tools image bundles `make` from #182). `script/ci/ci.sh`'s apt-install line now lists `make`, closing the env gap so coverage runs see the same recipes the regular CI does.
+- **Template-default fallback notice promoted from INFO to WARN** (#186). `_announce_template_default_fallback` in `script/docker/setup.sh` now emits `[setup] WARN:` instead of `[setup] INFO:` when the per-repo `setup.conf.local` is missing or has no `[section]` headers. INFO scrolled past in normal `build.sh` / `run.sh` output and users missed the heads-up that template defaults were silently in effect; WARN matches the semantics (this is an unusual configuration state worth flagging, not a routine status line). The two i18n keys also rename `info_no_repo_conf` → `warn_no_repo_conf` and `info_empty_repo_conf` → `warn_empty_repo_conf` across all four languages so the message table stays self-describing.
+
+## [v0.13.0] - 2026-04-29
+
+Minor release introducing the `setup.conf.local` user-override file.
+`setup.conf` is now a derived artifact (canonical-gitignored), regenerated
+by `setup.sh apply` from `template/setup.conf` overlaid by
+`setup.conf.local`. Existing repos auto-migrate on the next `make upgrade`
+(`init.sh` copies any tracked `setup.conf` to `setup.conf.local` before
+the gitignore sync's `git rm --cached`). No breaking changes from v0.12.4
+for end-users — the migration is in-place and idempotent.
+
+### Added
+- **`setup.conf` is now a derived artifact; user overrides live in `setup.conf.local`** (#174). Pre-#174 `setup.conf` was tracked by every downstream repo and mixed two semantically different kinds of data: machine-specific workspace writeback (the absolute `[volumes] mount_1` path baked by `setup.sh` on first init) and user override (`[image] rules`, `[deploy] gpu`, etc. the user edits to deviate from the template baseline). Git history therefore permanently leaked each contributor's home directory — the v0.9.4 portable-form auto-migration was a workaround, not a fix. Post-#174 `setup.conf` is canonical-gitignored and regenerated by `setup.sh apply` from `template/setup.conf` ← `setup.conf.local` (section-replace strategy). User overrides move to a tracked `setup.conf.local`; absent files mean "use template defaults". Implementation surface: `lib/gitignore.sh` adds `setup.conf` to the canonical entries, `_load_setup_conf` reads `.local` (not `setup.conf`), `_compute_conf_hash` hashes `template + .local` for drift detection, `setup.sh set / add / remove` and the TUI write to `.local` (bootstrap empty when missing — no more whole-template copy on first edit), `setup.sh show / list` use a new `_setup_load_merged_full` helper to display the merged effective view, `setup.sh reset` clears both `.local` and `setup.conf`, and `init.sh`'s existing-repo path migrates a tracked `setup.conf` into `setup.conf.local` once before the gitignore sync's `git rm --cached` step — idempotent + skipped when `.local` already exists. Old-format detection logic (warn + auto-migrate stale absolute `mount_1` paths from another contributor's clone) is no longer needed and was removed because the underlying leak vector (committed `setup.conf`) is gone at the source.
+
+### Documentation
+- **README upgrade section now spells out `make upgrade` preserve-vs-regenerate semantics** (4 languages). Three existing sub-sections expanded inline (no new headings): `When setup.sh runs` adds a bullet for the upgrade path and notes that `setup.sh apply` preserves `WS_PATH` / `APT_MIRROR_*` from any existing `.env`; `Derived artifacts (gitignored)` calls out that `.env` / `compose.yaml` are regenerated on every upgrade; `Updating` replaces the dense one-liner with a numbered 4-step list and adds a prerequisites paragraph (git identity / clean merge state), an implicit-downgrade-refusal comment in the `make upgrade VERSION=` snippet, and a closing paragraph documenting that `<repo>/setup.conf` and `<repo>/config/` stay user-owned with a `diff -ruN template/config config` hint when upstream `template/config/` moved. Surfaced gaps that previously required reading `upgrade.sh` source: pre-flight guards (`_require_git_identity` / `_require_clean_merge_state`), `_warn_config_drift`, `Refusing implicit downgrade`, and the fact that `init.sh` (called by `upgrade.sh` step 3) also syncs `.gitignore` and runs `setup.sh apply`.
+
+### Fixed
+- **`_write_setup_conf` no longer wipes the file when dst and tpl alias the same path** (#187). `setup_tui.sh::_commit_and_setup` passes the per-repo conf as both arguments after the first save (`_template_src="${_repo_conf}"` when `<repo>/setup.conf` exists), so `: > "${_dst}"` truncated the file before the `while ... done < "${_tpl}"` loop opened it for reading — the read landed on an empty file, the loop body never ran, and the user's entire per-repo configuration was silently destroyed (saving from the TUI exited with the success banner but produced 0 bytes on disk; `setup.sh apply` then fell back to template defaults). Now slurp the template into a `__tpl_lines` array up front and iterate that, so the truncate-and-rewrite is safe regardless of whether dst and tpl are distinct files. Same regression guards through `--reset-conf` followed by a TUI Save (Save runs immediately after build.sh's bootstrap apply emits a fresh `<repo>/setup.conf`, hitting the same aliasing path). One new unit test exercises the dst==tpl path directly.
+- **`Dockerfile.example`: drop dead `COPY compose.yaml /lint/compose.yaml`**. The /lint stage shellcheck'd `.sh` and hadolint'd `Dockerfile` but never read `/lint/compose.yaml` — the COPY was leftover scaffolding from earlier iterations. After v0.12.4 (#172) made `compose.yaml` a derived artifact (gitignored + `git rm --cached`), fresh CI checkouts no longer have the file and `docker/build-push-action`'s COPY step started failing on the build context for new repos generated from this template. The same dead-code line was patched out of the 10 affected v0.12.4 batch-upgrade PRs to unblock the rollout.
+
+## [v0.12.4] - 2026-04-29
+
+Patch release bundling two Makefile / setup-tui fixes plus the
+template-managed `.gitignore` plumbing introduced in #172. No new
+features, no breaking changes from v0.12.3.
+
+### Fixed
+- **`setup_tui` image rules are compacted on delete** (#177). Removing `rule_n` previously only marked the slot as removed, leaving `rule_(n+1) .. rule_max` with their original numbers; the next "add" then allocated `max + 1` instead of backfilling the gap, so the user was left looking at sparse indices like `rule_2, rule_3, rule_5`. The `__remove` branch in `_edit_image_rule` now calls a new `_compact_image_rules_after_remove` helper that shifts all higher-numbered rules down by one slot, so the menu always shows `rule_1 .. rule_M` consecutive and `add` allocates `M + 1` cleanly. The compaction loop walks occupied slots in ascending order and uses the existing override / removal primitives, so the in-memory mutation flows through to `_write_setup_conf` without any save-path changes.
+- **`make upgrade-check` no longer surfaces a fake `Error 1`** (#175). `upgrade.sh --check` exits 1 when an update is available — a deliberate shell convention so `if ./upgrade.sh --check; then ...` reads naturally — but `script/docker/Makefile` and `Makefile.ci` invoked the script directly, so make treated the exit as a build failure and printed `make: *** [Makefile:28: upgrade-check] Error 1` after the otherwise-correct "Update available: vX → vY" line. Both Makefile recipes now wrap the call as `./upgrade.sh --check || [ $$? -eq 1 ]` so make sees success when the check itself succeeded; exit codes ≥2 (genuine network / missing-`template/` failures) still propagate. Two new unit tests guard the wrap pattern in each Makefile, two new integration tests run the recipe end-to-end through real `make` (the `test-tools` image now installs GNU `make` for this purpose, and `release-test-tools.yaml` smoke step adds `make --version`).
+
+### Changed
+- **`setup_tui` Save & Exit lives in the menu body on both backends** (#178). dialog used to render Save as a third footer button via `--extra-button --extra-label "Save"` while whiptail (no `--extra-button` equivalent — newt library limitation) injected a synthetic `__save` menu entry. The same repo therefore looked and behaved differently on a stock Ubuntu host (whiptail-only) versus a host with `dialog` installed, so screenshots and docs could not be shared. After this change both backends use the synthetic `__save` entry — placed last in the main menu — for identical UX, screenshots, and docs. Trade-off: dialog users lose the one-keystroke Save (must move cursor onto `__save` then press Enter); the unified UX is worth the extra step. Side cleanups: `_tui_menu` no longer reads `TUI_EXTRA_LABEL` (the env hook is now a no-op rather than removed, so unrelated callers keep working); `_render_advanced_menu` drops the `TUI_EXTRA_LABEL` save/restore dance; the OK/Cancel label translation in `_tui_run` (introduced in #136 for whiptail-spelling) stays untouched.
+
+### Added
+- **`.gitignore` is now template-managed** (#172). Two new helpers in `template/script/docker/lib/gitignore.sh` — `_sync_gitignore <path>` (append-missing strategy: idempotent, preserves user-defined lines, leaves a `# managed by template (do not remove)` marker on first sync) and `_untrack_canonical_in_repo <repo>` (`git rm --cached` for any canonical entry that's still git-tracked) — wire into both `init.sh` paths and propagate through `upgrade.sh`. Canonical set: `.env`, `.env.bak`, `compose.yaml`, `setup.conf.bak`, `coverage/`, `.Dockerfile.generated`. Future derived artifacts get appended to the lib in a later release and downstream repos pick them up automatically on the next `make upgrade`. The wiring also heals the v0.9.0+ drift where 15/17 downstream repos still git-tracked `compose.yaml` despite it being a derived artifact: the next batch-upgrade emits the `git rm --cached` in the same commit as the workflow `@tag` rewrite, with no separate sweep PR.
+
 ## [v0.12.3] - 2026-04-28
 
 Patch release that completes the test-tools migration started in v0.12.2 (#165 + #164) and fixes a bash 5.3 silent-exit bug in `upgrade.sh --check` exposed by the alpine runner. No breaking changes from v0.12.2.

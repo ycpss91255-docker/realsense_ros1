@@ -120,6 +120,25 @@ _validate_env_kv() {
   return 1
 }
 
+# _validate_additional_context <value>
+#
+# Compose `build.additional_contexts` entry. Format:
+#   <name>=<value>
+# <name> follows BuildKit's named-context naming: starts with a letter
+# or digit, then alphanumerics plus underscore / dot / hyphen.
+# <value> is a free-form context source (relative path, docker-image://,
+# https://, oci-layout://, etc.) and must be non-empty.
+_validate_additional_context() {
+  local _v="${1-}"
+  [[ -z "${_v}" ]] && return 1
+  [[ "${_v}" != *"="* ]] && return 1
+  local _name="${_v%%=*}"
+  local _val="${_v#*=}"
+  [[ -z "${_name}" || -z "${_val}" ]] && return 1
+  [[ "${_name}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] && return 0
+  return 1
+}
+
 # _validate_network_name <value>
 #
 # Docker network name: start with [a-zA-Z0-9], then alphanumerics plus
@@ -341,9 +360,21 @@ _write_setup_conf() {
   # Silence unused-nameref warning; the declaration is part of the API.
   : "${_wsc_sections[*]:-}"
 
-  local __line __current="" __k __rest
-  : > "${_dst}"
+  # #187: setup_tui's `_commit_and_setup` passes the same path for dst
+  # and tpl when the per-repo file already exists. Truncating dst before
+  # reading from tpl (the original `: > "${_dst}"` followed by `done <
+  # "${_tpl}"`) collapses the read to zero lines under that aliasing and
+  # silently destroys the user's config. Slurp the template into memory
+  # first so the subsequent truncate-and-rewrite is safe regardless of
+  # whether dst and tpl are distinct files.
+  local -a __tpl_lines=()
   while IFS= read -r __line || [[ -n "${__line}" ]]; do
+    __tpl_lines+=("${__line}")
+  done < "${_tpl}"
+
+  local __current="" __k __rest
+  : > "${_dst}"
+  for __line in "${__tpl_lines[@]}"; do
     if [[ "${__line}" =~ ^[[:space:]]*\[(.+)\][[:space:]]*$ ]]; then
       # Flush not-yet-emitted overrides belonging to the section we are
       # about to leave (those are "added" keys with no template line).
@@ -383,7 +414,7 @@ _write_setup_conf() {
       fi
     fi
     printf '%s\n' "${__line}" >> "${_dst}"
-  done < "${_tpl}"
+  done
 
   # Flush leftovers belonging to the final section
   if [[ -n "${__current}" ]]; then
@@ -392,9 +423,60 @@ _write_setup_conf() {
       if [[ "${__ovk}" == "${__current}."* && -z "${__emitted[${__ovk}]:-}" ]]; then
         [[ -n "${__removed[${__ovk}]+x}" ]] && continue
         printf '%s = %s\n' "${__ovk#"${__current}".}" "${__override[${__ovk}]}" >> "${_dst}"
+        __emitted[${__ovk}]=1
       fi
     done
   fi
+
+  # Append NEW sections — overrides whose `<section>.<key>` namespace
+  # references a section never seen in the template. Per-stage
+  # `[stage:NAME]` sections (#220) are the typical case: template's
+  # setup.conf carries no per-repo stage overrides, so the first time
+  # a user adds `[stage:headless]` via TUI Save the section is brand
+  # new and would otherwise be silently dropped here.
+  #
+  # Section-name extraction uses the `<section>.<key>` split rule
+  # established by `_load_setup_conf_full`: section name has no `.`,
+  # key may. `stage:headless.gui.mode` → section=stage:headless,
+  # key=gui.mode.
+  local -A __template_sections=()
+  local __l
+  for __l in "${__tpl_lines[@]}"; do
+    if [[ "${__l}" =~ ^[[:space:]]*\[(.+)\][[:space:]]*$ ]]; then
+      __template_sections["${BASH_REMATCH[1]}"]=1
+    fi
+  done
+
+  # Walk override keys in the order the caller provided them so new
+  # sections appear in user-input order (predictable for tests + Save
+  # output diffs). Bash associative-array iteration is unspecified.
+  local -a __new_section_order=()
+  local -A __new_section_seen=()
+  local _wsc_i
+  for (( _wsc_i = 0; _wsc_i < ${#_wsc_keys[@]}; _wsc_i++ )); do
+    local __ovk_key="${_wsc_keys[_wsc_i]}"
+    local __ovk_sect="${__ovk_key%%.*}"
+    if [[ -z "${__template_sections[${__ovk_sect}]:-}" ]] \
+       && [[ -z "${__new_section_seen[${__ovk_sect}]:-}" ]]; then
+      __new_section_order+=("${__ovk_sect}")
+      __new_section_seen[${__ovk_sect}]=1
+    fi
+  done
+
+  # Emit each new section + its keys (skip emitted / removed entries
+  # so re-saves don't double-write).
+  local __ns
+  for __ns in "${__new_section_order[@]}"; do
+    printf '\n[%s]\n' "${__ns}" >> "${_dst}"
+    for (( _wsc_i = 0; _wsc_i < ${#_wsc_keys[@]}; _wsc_i++ )); do
+      local __key="${_wsc_keys[_wsc_i]}"
+      [[ "${__key}" == "${__ns}."* ]] || continue
+      [[ -n "${__emitted[${__key}]:-}" ]] && continue
+      [[ -n "${__removed[${__key}]+x}" ]] && continue
+      printf '%s = %s\n' "${__key#"${__ns}".}" "${_wsc_values[_wsc_i]}" >> "${_dst}"
+      __emitted[${__key}]=1
+    done
+  done
 }
 
 # ════════════════════════════════════════════════════════════════════

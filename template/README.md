@@ -60,7 +60,7 @@ graph TB
         smoke["test/smoke/<br/>script_help.bats<br/>display_env.bats"]
         config["config/<br/>bashrc / tmux / terminator / pip"]
         mgmt["script/docker/<br/>build.sh / run.sh / exec.sh / stop.sh / setup.sh"]
-        workflows["Reusable Workflows<br/>build-worker.yaml<br/>release-worker.yaml"]
+        workflows["Reusable Workflows<br/>build-worker.yaml<br/>release-worker.yaml<br/>publish-worker.yaml (opt-in)"]
     end
 
     subgraph consumer["Docker Repo (e.g. ros_noetic)"]
@@ -111,7 +111,7 @@ flowchart LR
 | File | Description |
 |------|-------------|
 | `build.sh` | Build containers (TTY-aware `--setup` launches `setup_tui.sh`, else runs `setup.sh`) |
-| `run.sh` | Run containers (X11/Wayland support; same `--setup` semantics as `build.sh`) |
+| `run.sh` | Run containers (X11/Wayland support; same `--setup` semantics as `build.sh`; `--build` opt-in pre-flight ./build.sh test for fresh-clone CI parity) |
 | `exec.sh` | Exec into running containers |
 | `stop.sh` | Stop and remove containers |
 | `setup_tui.sh` | Interactive setup.conf editor (dialog / whiptail front-end) |
@@ -166,6 +166,107 @@ Notes:
   buildx pulls the arch-correct binaries over the wire instead of rebuilding
   them per run, and sidesteps the cross-step image-store isolation that
   `docker-container` buildx drivers enforce.
+
+#### Adding extra stages (#215)
+
+Any `FROM <base> AS <stage>` outside the baseline blocklist
+`{sys, base, devel, test}` is auto-emitted as a compose service that
+`extends: devel` (inherits volumes / network / GPU / GUI / cap_add /
+additional_contexts) and overrides only `build.target` / `image` /
+`container_name` / `stdin_open` / `tty` / `profiles`. Use case:
+entrypoint variants like NVIDIA Isaac Sim's `headless` + `gui` on top
+of `devel`.
+
+User flow:
+
+```dockerfile
+# Add to Dockerfile (no setup.conf change needed)
+FROM devel AS headless
+ENTRYPOINT ["/isaac-sim/runheadless.sh"]
+CMD ["-v"]
+
+FROM devel AS gui
+ENTRYPOINT ["/isaac-sim/runapp.sh"]
+```
+
+```bash
+./build.sh                    # regenerates compose.yaml, builds all stages
+./run.sh -t headless          # runs the headless variant
+./run.sh -t gui               # runs the gui variant
+./exec.sh -t headless bash    # exec into running headless container
+```
+
+Constraints:
+
+- Stage names must match `^[a-z][a-z0-9_-]*$` — uppercase / leading
+  digit / dot etc. are rejected (WARN + skip; the rest of the parse
+  continues).
+- Names colliding with the baseline (`sys` / `base` / `devel` / `test`)
+  are a hard error from `setup.sh apply`. So are names colliding with
+  the template-controlled image-tag namespace (`latest`, `v[0-9]*`).
+- Adding / removing a stage triggers `setup.sh check-drift` (via
+  `SETUP_DOCKERFILE_HASH` in `.env`), so wrappers auto-regenerate
+  `compose.yaml` on the next invocation. Unrelated `RUN apt-get
+  install` edits do **not** trigger drift.
+
+#### Per-stage `setup.conf` overrides (#220)
+
+Stages auto-emitted by #215 share devel's runtime config (volumes /
+GPU / network / GUI) by default. When a stage needs different runtime
+settings — e.g. NVIDIA Isaac Sim's `headless` running a WebRTC
+livestream wants `network=bridge` + a port mapping + `gui=off`, while
+`devel` and `gui` keep `network=host` + X11 — add a `[stage:<name>]`
+section to your repo's `setup.conf`:
+
+```ini
+[gui]
+mode = auto
+
+[network]
+mode = host
+
+[stage:headless]
+gui.mode = off
+network.mode = bridge
+network.port_1 = 8080:80
+deploy.gpu_capabilities = gpu compute utility graphics video
+```
+
+Use `./setup_tui.sh` for an interactive editor:
+
+- **Advanced → Per-stage overrides**: drills straight into the editor.
+  The entry only appears when your Dockerfile has at least one
+  non-baseline stage.
+- **Features → Per-stage overrides** (#221): always-visible
+  discoverability surface that lists conditional / power-user
+  features. When the precondition is met it acts as a shortcut into
+  the same editor; when not, it pops a msgbox explaining how to
+  enable.
+
+Allowlist (v1 — keys that can be overridden per-stage):
+
+| Section | Keys |
+|---|---|
+| `[deploy]` | `gpu_mode`, `gpu_count`, `gpu_capabilities`, `runtime` |
+| `[gui]` | `mode` |
+| `[network]` | `mode`, `ipc`, `network_name`, `port_<N>`, `port_inherit` |
+| `[security]` | `privileged` |
+| `[volumes]` | `mount_<N>`, `mount_inherit` |
+| `[environment]` | `env_<N>`, `env_inherit` |
+
+List fields (`mount_*` / `port_*` / `env_*`) follow **append-default**:
+the stage's items are appended to top-level entries. To replace
+top-level entirely, set `<list>_inherit = false` (e.g.
+`volumes.mount_inherit = false`).
+
+Notes:
+
+- `[stage:devel]` is **reserved** (v1 no-op + WARN). Edit top-level
+  sections to tune devel. Revisit in v2.
+- `[stage:sys|base|test]` is a **hard error** (baseline collision).
+- `[stage:foo]` referencing a stage absent from the Dockerfile is
+  **WARN + skipped** (the rest of `setup.sh apply` continues).
+- Override keys outside the allowlist are **WARN + skipped per-key**.
 
 ### Smoke test helpers (for downstream repos)
 
@@ -232,7 +333,24 @@ is copied to the repo and the detected workspace is written to
 
 ### Interactive TUI
 
-`./setup_tui.sh` opens the main menu and lets you edit values across all sections; the backend is `dialog` or `whiptail` (when both are missing it prints a `sudo apt install dialog` hint and exits). Cancel / Esc leaves without saving; saving auto-invokes `setup.sh` to regenerate `.env` + `compose.yaml`.
+`./setup_tui.sh` opens the main menu. The backend is `dialog` or `whiptail` (when both are missing it prints a `sudo apt install dialog` hint and exits). Cancel / Esc leaves without saving; saving auto-invokes `setup.sh` to regenerate `.env` + `compose.yaml`.
+
+Main menu structure (#221):
+
+```
+Main
+├─ image            IMAGE_NAME detection rules
+├─ build            APT mirrors + Dockerfile build args
+├─ Runtime  ──→     network / deploy (GPU) / gui / environment
+├─ Mounts   ──→     volumes / devices / tmpfs
+├─ Advanced ──→     security / additional_contexts
+│                   / per_stage (conditional) / Reset
+├─ Features         conditional / power-user features index
+│                   (today: per_stage status row)
+└─ Save & Exit
+```
+
+`./setup_tui.sh <section>` still drills directly into a section editor (e.g. `./setup_tui.sh volumes`), bypassing the main menu.
 
 ### When setup.sh runs
 
@@ -240,10 +358,32 @@ is copied to the repo and the detected workspace is written to
 every build or launch:
 
 - **`./template/init.sh`** runs it once after the skeleton lands
+- **`make upgrade` / `./template/upgrade.sh`** re-runs it via init.sh
+  after the subtree pull, so an upgrade always lands with `.env` /
+  `compose.yaml` regenerated against the new baseline
 - **`./build.sh --setup` / `./run.sh --setup`** (or `-s`) re-runs it on demand
 - **First-time bootstrap**: `./build.sh` / `./run.sh` auto-run setup.sh
   the very first time (when `.env` is missing, e.g. after a fresh CI
   clone) — no manual `--setup` needed
+
+> **Fresh-clone lint coverage (#216)**: `./run.sh` on a clone with no
+> image cached locally triggers Compose's auto-build, which only walks
+> `target: devel` (or whatever `-t` says) and **skips** the `target:
+> test` stage that runs ShellCheck / Hadolint / Bats smoke. `run.sh`
+> prints an informational `[run] INFO:` block when this is about to
+> happen (TTY only). Pass `--build` to pre-flight `./build.sh test`
+> first if you want full local-CI parity in one command:
+>
+> ```bash
+> ./build.sh test           # explicit lint + smoke pass
+> ./run.sh --build          # same, then compose up
+> ./run.sh                  # default — fast path, lint/smoke skipped
+> ```
+
+`setup.sh apply` rewrites `compose.yaml` from scratch every time but
+preserves `WS_PATH` / `APT_MIRROR_UBUNTU` / `APT_MIRROR_DEBIAN` from any
+existing `.env`, so a hand-tuned workspace path or apt mirror survives
+upgrades.
 
 ### Drift detection
 
@@ -294,7 +434,9 @@ If a downstream repo has custom scripts invoking `setup.sh` directly, prepend `a
 - `compose.yaml` — full compose with baseline + conditional blocks
 
 Open `compose.yaml` anytime to inspect the repo's current effective
-configuration.
+configuration. Both files are regenerated on every `make upgrade`
+(init.sh re-runs `setup.sh apply` after the subtree pull) — never
+hand-edit them; put your overrides in `setup.conf` instead.
 
 ## Quick Start
 
@@ -318,6 +460,10 @@ git subtree add --prefix=template \
 
 ### Updating
 
+Prerequisites: `git config user.name` / `user.email` must be set, and
+the working tree can't be mid-merge / rebase / cherry-pick / revert —
+upgrade.sh fails fast with an actionable message instead of half-pulling.
+
 ```bash
 # Check if update available
 make upgrade-check
@@ -327,16 +473,37 @@ make upgrade
 
 # Or pin a specific version
 make upgrade VERSION=v0.3.0
+# Pinning to a version OLDER than the current local pin (e.g. rolling
+# from v0.12.0-rc1 back to v0.11.0) is refused as an implicit downgrade
+# per SemVer §11. Edit template/.version manually if intentional.
 
 # Fallback if make is unavailable
 ./template/upgrade.sh v0.3.0
 ```
 
-`upgrade.sh` handles the full cycle in one go: `git subtree pull --squash`,
-post-pull integrity check (rolls back on destructive FF), `./template/init.sh`
-to resync root symlinks, and `sed` of `.github/workflows/main.yaml`'s
-`build-worker.yaml@vX.Y.Z` / `release-worker.yaml@vX.Y.Z` references. Don't
-subtree pull by hand — the sed + init steps are easy to forget.
+`upgrade.sh` handles the full cycle in one go:
+
+1. `git subtree pull --prefix=template ... --squash`
+2. Post-pull integrity check — `git reset --hard` rollback if subtree
+   markers (`template/.version`, `template/init.sh`,
+   `template/script/docker/setup.sh`) are missing (catches the
+   destructive fast-forward seen on older `git-subtree.sh`)
+3. `./template/init.sh` re-runs to: resync root symlinks
+   (`build.sh` / `run.sh` / `Makefile` …), sync `.gitignore` against
+   the canonical entry set, `git rm --cached` any tracked-but-now-derived
+   files (`.env`, `compose.yaml`, …), and call `setup.sh apply` to
+   regenerate `.env` + `compose.yaml`
+4. `sed` rewrites `.github/workflows/main.yaml`'s
+   `build-worker.yaml@vX.Y.Z` / `release-worker.yaml@vX.Y.Z` refs
+
+Your per-repo files are never overwritten: `<repo>/setup.conf` stays
+as-is, and `<repo>/config/` (bashrc / tmux / terminator …) is left
+alone — if upstream `template/config/` moved since the last pull,
+upgrade.sh prints a `diff -ruN template/config config` hint so you can
+reconcile manually.
+
+Don't `git subtree pull` by hand — the integrity check, init.sh
+resync, and sed steps are easy to forget.
 
 #### Automated version bumps (optional)
 
@@ -397,6 +564,68 @@ jobs:
 |-------|------|----------|---------|-------------|
 | `archive_name_prefix` | string | yes | - | Archive name prefix |
 | `extra_files` | string | no | `""` | Space-separated extra files |
+
+### publish-worker.yaml inputs (opt-in, foundational image repos)
+
+Pushes a Dockerfile target stage to a container registry on tag push.
+Opt-in: only repos that consume this workflow publish images (default
+template flow stays test-only). Typical use case: foundational image
+repos (`ros_distro`, `ros2_distro`) that other repos consume via
+Docker `FROM`.
+
+| Input | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `image_name` | string | yes | - | Image repo name on the registry (e.g. `ros_distro`); full ref becomes `${registry}/${owner}/${image_name}` |
+| `tag_suffix` | string | no | `""` | Appended to both `:${version}` and `:latest` tags. Convention: `-<matrix-entry-name>` so each variant lands on its own tag |
+| `is_latest` | boolean | no | `false` | When true, also pushes `:latest${tag_suffix}` alongside `:${version}${tag_suffix}`. Multi-variant repos set this only on the canonical default variant |
+| `registry` | string | no | `"ghcr.io"` | Container registry hostname. GHCR uses GITHUB_TOKEN auth automatically |
+| `target` | string | no | `"devel"` | Dockerfile target stage to publish. `devel` for app-base usage; `runtime` for production images |
+| `build_args` | string | no | `""` | Multi-line KEY=VALUE build args (same shape as build-worker) |
+| `platforms` | string | no | `"linux/amd64"` | Comma-separated target platforms; multi-arch publishes a single multi-arch manifest under each tag |
+| `context_path` | string | no | `"."` | Build context (mirrors build-worker) |
+| `dockerfile_path` | string | no | `""` | Optional explicit Dockerfile path |
+| `build_contexts` | string | no | `""` | Optional newline-separated `<name>=<location>` build contexts |
+| `test_tools_version` | string | no | `"latest"` | `ghcr.io/.../test-tools:<tag>` build-arg (pin to your template release for reproducibility) |
+
+Caller example (foundational multi-variant repo):
+
+```yaml
+# .github/workflows/main.yaml
+jobs:
+  call-publish:
+    needs: ci-passed
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        target:
+          - { name: 'noetic-desktop-full',  base: 'osrf/ros:noetic-desktop-full-focal',   is_latest: true }
+          - { name: 'noetic-ros-base',      base: 'ros:noetic-ros-base-focal',            is_latest: false }
+          - { name: 'kinetic-desktop-full', base: 'osrf/ros:kinetic-desktop-full-xenial', is_latest: false }
+          - { name: 'kinetic-ros-base',     base: 'ros:kinetic-ros-base-xenial',          is_latest: false }
+    uses: ycpss91255-docker/template/.github/workflows/publish-worker.yaml@vX.Y.Z
+    with:
+      image_name: ros_distro
+      tag_suffix: "-${{ matrix.target.name }}"
+      is_latest: ${{ matrix.target.is_latest }}
+      target: devel
+      build_args: |
+        BASE_IMAGE=${{ matrix.target.base }}
+```
+
+After a `v0.1.0` tag push, the matrix above yields:
+
+```
+ghcr.io/<org>/ros_distro:v0.1.0-noetic-desktop-full
+ghcr.io/<org>/ros_distro:latest-noetic-desktop-full   # is_latest = true
+ghcr.io/<org>/ros_distro:v0.1.0-noetic-ros-base
+ghcr.io/<org>/ros_distro:v0.1.0-kinetic-desktop-full
+ghcr.io/<org>/ros_distro:v0.1.0-kinetic-ros-base
+```
+
+Downstream app repos (e.g. `urg_node`) then `FROM ghcr.io/<org>/ros_distro:v0.1.0-humble-desktop-full` in their own Dockerfile, dropping the duplicated sys / base / devel layers.
 
 ## Running Template Tests
 
@@ -480,8 +709,10 @@ template/
 ├── codecov.yml
 ├── .github/workflows/
 │   ├── self-test.yaml                # Template CI
-│   ├── build-worker.yaml             # Reusable build workflow
-│   └── release-worker.yaml           # Reusable release workflow
+│   ├── build-worker.yaml             # Reusable build + smoke-test workflow
+│   ├── release-worker.yaml           # Reusable release (source archive) workflow
+│   ├── publish-worker.yaml           # Reusable image publish workflow (opt-in; pushes to GHCR)
+│   └── release-test-tools.yaml       # Template's own test-tools image release
 ├── doc/
 │   ├── readme/                       # README translations (zh-TW / zh-CN / ja)
 │   ├── test/TEST.md                  # Test catalog (spec tables)
