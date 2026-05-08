@@ -2,7 +2,7 @@ ARG ROS_DISTRO="noetic"
 ARG ROS_TAG="ros-base"
 ARG UBUNTU_CODENAME="focal"
 
-############################## test tool sources ##############################
+############################## devel-test tool sources ##############################
 FROM bats/bats:latest AS bats-src
 
 FROM alpine:latest AS bats-extensions
@@ -82,8 +82,8 @@ RUN sed -i "s@archive.ubuntu.com@${APT_MIRROR_UBUNTU}@g" /etc/apt/sources.list |
     update-locale LANG="${LANG}" && \
     ln -snf /usr/share/zoneinfo/"${TZ}" /etc/localtime && echo "${TZ}" > /etc/timezone
 
-############################## base ##############################
-FROM sys AS base
+############################## devel-base ##############################
+FROM sys AS devel-base
 
 ARG ROS_DISTRO
 
@@ -118,7 +118,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 ############################## devel ##############################
-FROM base AS devel
+FROM devel-base AS devel
 
 ARG USER
 ARG GROUP
@@ -152,8 +152,8 @@ EXPOSE 22
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]
 
-############################## test (ephemeral) ##############################
-FROM devel AS test
+############################## devel-test (ephemeral) ##############################
+FROM devel AS devel-test
 
 USER root
 
@@ -224,3 +224,17 @@ EXPOSE 22
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["roslaunch", "realsense2_camera", "rs_camera.launch"]
+
+############################## runtime-test (ephemeral) ##############################
+# Install-check smoke for the runtime image (template v0.21.1+ #243).
+# Default smoke verifies USER + bash on PATH. Override per-repo via
+# build_args: RUNTIME_SMOKE_CMD=<command> (constraint: CLI-only, no
+# GUI binaries that init Qt / OGRE on --version / --help).
+#
+# `sh -c` wrapper required: bare `RUN ${ARG}` word-splits operators
+# (&&, ||) and nested quotes. The wrapper passes the value as a
+# single string for sh to parse normally.
+FROM runtime AS runtime-test
+
+ARG RUNTIME_SMOKE_CMD='whoami && bash --version'
+RUN sh -c "${RUNTIME_SMOKE_CMD}"
