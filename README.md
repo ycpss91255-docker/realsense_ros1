@@ -1,15 +1,22 @@
-**[English](README.md)** | **[繁體中文](doc/README.zh-TW.md)** | **[简体中文](doc/README.zh-CN.md)** | **[日本語](doc/README.ja.md)**
-
 # Intel RealSense Docker Container (ROS 1 Noetic)
 
-> **TL;DR** — Containerized Intel RealSense driver for ROS 1 Noetic. Installs `realsense2_camera` and `librealsense2` from apt, includes udev rules for device access.
->
-> ```bash
-> ./build.sh && ./run.sh
-> ```
+[![CI](https://github.com/ycpss91255-docker/realsense_noetic/actions/workflows/main.yaml/badge.svg)](https://github.com/ycpss91255-docker/realsense_noetic/actions/workflows/main.yaml)
+
+**[English](README.md)** | **[繁體中文](doc/README.zh-TW.md)** | **[简体中文](doc/README.zh-CN.md)** | **[日本語](doc/README.ja.md)**
+
+## TL;DR
+
+Containerized Intel RealSense driver for ROS 1 Noetic. Installs `realsense2_camera` and `librealsense2` from apt, includes udev rules for device access.
+
+```bash
+./build.sh && ./run.sh
+```
+
+---
 
 ## Table of Contents
 
+- [Overview](#overview)
 - [Features](#features)
 - [Quick Start](#quick-start)
 - [Usage](#usage)
@@ -19,6 +26,10 @@
 - [Directory Structure](#directory-structure)
 
 ---
+
+## Overview
+
+Provides a reproducible ROS 1 Noetic environment for Intel RealSense depth cameras. The container installs `realsense2_camera` and `librealsense2` from the ROS apt repository and ships with the upstream udev rules baked in so USB devices come up under the correct permissions inside the container. Multi-arch base image supports x86_64 and ARM64 (Raspberry Pi, Jetson CPU mode).
 
 ## Features
 
