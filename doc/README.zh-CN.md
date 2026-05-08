@@ -2,6 +2,8 @@
 
 # Intel RealSense Docker 容器（ROS 1 Noetic）
 
+[![CI](https://github.com/ycpss91255-docker/realsense_noetic/actions/workflows/main.yaml/badge.svg)](https://github.com/ycpss91255-docker/realsense_noetic/actions/workflows/main.yaml) [![License](https://img.shields.io/badge/License-Apache--2.0-blue?style=flat-square)](../LICENSE)
+
 > **TL;DR** — 容器化的 Intel RealSense ROS 1 Noetic 驱动程序。通过 apt 安装 `realsense2_camera` 和 `librealsense2`，内含 udev 规则以访问设备。
 >
 > ```bash
