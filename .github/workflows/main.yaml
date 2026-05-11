@@ -23,7 +23,7 @@ jobs:
         ROS_DISTRO=noetic
         ROS_TAG=ros-base
         UBUNTU_CODENAME=focal
-        RUNTIME_SMOKE_CMD=. /opt/ros/noetic/setup.bash && rospack find realsense2_camera
+        RUNTIME_SMOKE_CMD=bash -c '. /opt/ros/noetic/setup.bash && rospack find realsense2_camera'
 
   call-release:
     needs: call-docker-build
