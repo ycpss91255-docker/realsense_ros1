@@ -124,10 +124,13 @@ ARG USER
 ARG GROUP
 ARG ENTRYPOINT_FILE="script/entrypoint.sh"
 ARG CONFIG_DIR="/tmp/config"
-ARG CONFIG_SRC="template/config"
+ARG SETUP_DIR="/tmp/setup"
+ARG CONFIG_SRC="config"
 
 COPY --chmod=0755 "./${ENTRYPOINT_FILE}" "/entrypoint.sh"
+COPY --chown="${USER}":"${GROUP}" --chmod=0755 .base/config "${CONFIG_DIR}"
 COPY --chown="${USER}":"${GROUP}" --chmod=0755 "${CONFIG_SRC}" "${CONFIG_DIR}"
+COPY --chmod=0755 .base/dockerfile/setup "${SETUP_DIR}"
 
 # Copy RealSense udev rules
 RUN mkdir -p /etc/udev/rules.d
@@ -136,14 +139,17 @@ COPY --chmod=0644 config/realsense/99-realsense-libusb.rules /etc/udev/rules.d/
 USER "${USER}"
 
 # Setup pip packages
-RUN "${CONFIG_DIR}"/pip/setup.sh
+RUN "${SETUP_DIR}"/pip/setup.sh
 
 # Setup shell, terminator, tmux
 RUN cat "${CONFIG_DIR}"/shell/bashrc >> "${HOME}/.bashrc" && \
     chown "${USER}":"${GROUP}" "${HOME}/.bashrc" && \
+    mkdir -p "${HOME}/.bashrc.d" && \
+    cp -n "${CONFIG_DIR}"/shell/bashrc.d/*.sh "${HOME}/.bashrc.d/" 2>/dev/null || true && \
+    chown -R "${USER}":"${GROUP}" "${HOME}/.bashrc.d" && \
     "${CONFIG_DIR}"/shell/terminator/setup.sh && \
     "${CONFIG_DIR}"/shell/tmux/setup.sh && \
-    sudo rm -rf "${CONFIG_DIR}"
+    sudo rm -rf "${CONFIG_DIR}" "${SETUP_DIR}"
 
 WORKDIR "${HOME}/work"
 
@@ -165,7 +171,7 @@ COPY --from=lint-tools /usr/local/bin/hadolint /usr/local/bin/hadolint
 COPY .hadolint.yaml /lint/.hadolint.yaml
 COPY Dockerfile /lint/Dockerfile
 COPY *.sh /lint/
-COPY template/script/docker/*.sh /lint/
+COPY .base/script/docker/*.sh /lint/
 RUN shellcheck -S warning /lint/*.sh
 RUN cd /lint && hadolint Dockerfile
 
@@ -178,7 +184,7 @@ RUN ln -sf /opt/bats/bin/bats /usr/local/bin/bats
 ENV BATS_LIB_PATH="/usr/lib/bats"
 
 # Smoke test
-COPY template/test/smoke/ /smoke_test/
+COPY .base/test/smoke/ /smoke_test/
 COPY test/smoke/ /smoke_test/
 
 ARG USER
