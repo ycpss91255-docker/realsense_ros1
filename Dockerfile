@@ -138,8 +138,6 @@ COPY --chmod=0644 config/realsense/99-realsense-libusb.rules /etc/udev/rules.d/
 
 USER "${USER}"
 
-# Setup pip packages
-RUN PIP_BREAK_SYSTEM_PACKAGES=1 pip install --no-cache-dir -r "${CONFIG_DIR}"/pip/requirements.txt
 
 # Setup shell, terminator, tmux
 RUN cat "${CONFIG_DIR}"/shell/bashrc >> "${HOME}/.bashrc" && \
