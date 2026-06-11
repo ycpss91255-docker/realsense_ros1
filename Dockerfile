@@ -3,16 +3,17 @@ ARG ROS_TAG="ros-base"
 ARG UBUNTU_CODENAME="focal"
 
 ############################## devel-test tool sources ##############################
-FROM bats/bats:latest AS bats-src
+FROM bats/bats:1.11.0 AS bats-src
 
-FROM alpine:latest AS bats-extensions
+FROM alpine:3.21 AS bats-extensions
 RUN apk add --no-cache git && \
     git clone --depth 1 -b v0.3.0 \
         https://github.com/bats-core/bats-support /bats/bats-support && \
     git clone --depth 1 -b v2.1.0 \
         https://github.com/bats-core/bats-assert  /bats/bats-assert
 
-FROM alpine:latest AS lint-tools
+FROM alpine:3.21 AS lint-tools
+SHELL ["/bin/ash", "-o", "pipefail", "-c"]
 RUN apk add --no-cache curl xz && \
     curl -fsSL \
         https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz \
@@ -57,7 +58,7 @@ RUN if getent group "${GID}" >/dev/null; then \
     elif id -u "${USER}" >/dev/null 2>&1; then \
         usermod -u "${UID}" -g "${GID}" -s "${SHELL}" -d "/home/${USER}" -m "${USER}"; \
     else \
-        useradd -u "${UID}" -g "${GID}" -s "${SHELL}" -m "${USER}"; \
+        useradd -l -u "${UID}" -g "${GID}" -s "${SHELL}" -m "${USER}"; \
     fi; \
     \
     mkdir -p /etc/sudoers.d; \
@@ -130,7 +131,6 @@ ARG CONFIG_SRC="config"
 COPY --chmod=0755 "./${ENTRYPOINT_FILE}" "/entrypoint.sh"
 COPY --chown="${USER}":"${GROUP}" --chmod=0755 .base/config "${CONFIG_DIR}"
 COPY --chown="${USER}":"${GROUP}" --chmod=0755 "${CONFIG_SRC}" "${CONFIG_DIR}"
-COPY --chmod=0755 .base/dockerfile/setup "${SETUP_DIR}"
 
 # Copy RealSense udev rules
 RUN mkdir -p /etc/udev/rules.d
@@ -138,8 +138,6 @@ COPY --chmod=0644 config/realsense/99-realsense-libusb.rules /etc/udev/rules.d/
 
 USER "${USER}"
 
-# Setup pip packages
-RUN "${SETUP_DIR}"/pip/setup.sh
 
 # Setup shell, terminator, tmux
 RUN cat "${CONFIG_DIR}"/shell/bashrc >> "${HOME}/.bashrc" && \
@@ -170,11 +168,12 @@ COPY --from=lint-tools /usr/local/bin/hadolint /usr/local/bin/hadolint
 # Lint: ShellCheck (.sh) + Hadolint (Dockerfile)
 COPY .hadolint.yaml /lint/.hadolint.yaml
 COPY Dockerfile /lint/Dockerfile
-COPY *.sh /lint/
+COPY script/*.sh /lint/
 COPY .base/script/docker/*.sh /lint/
 COPY .base/script/docker/lib /lint/lib
 RUN shellcheck -S warning /lint/*.sh /lint/lib/*.sh
-RUN cd /lint && hadolint Dockerfile
+WORKDIR /lint
+RUN hadolint Dockerfile
 
 # Install bats
 COPY --from=bats-src /opt/bats /opt/bats
