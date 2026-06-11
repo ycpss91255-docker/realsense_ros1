@@ -3,16 +3,16 @@ ARG ROS_TAG="ros-base"
 ARG UBUNTU_CODENAME="focal"
 
 ############################## devel-test tool sources ##############################
-FROM bats/bats:latest AS bats-src
+FROM bats/bats:1.11.0 AS bats-src
 
-FROM alpine:latest AS bats-extensions
+FROM alpine:3.21 AS bats-extensions
 RUN apk add --no-cache git && \
     git clone --depth 1 -b v0.3.0 \
         https://github.com/bats-core/bats-support /bats/bats-support && \
     git clone --depth 1 -b v2.1.0 \
         https://github.com/bats-core/bats-assert  /bats/bats-assert
 
-FROM alpine:latest AS lint-tools
+FROM alpine:3.21 AS lint-tools
 RUN apk add --no-cache curl xz && \
     curl -fsSL \
         https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz \
