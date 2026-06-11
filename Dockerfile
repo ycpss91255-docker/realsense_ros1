@@ -13,6 +13,7 @@ RUN apk add --no-cache git && \
         https://github.com/bats-core/bats-assert  /bats/bats-assert
 
 FROM alpine:3.21 AS lint-tools
+SHELL ["/bin/ash", "-o", "pipefail", "-c"]
 RUN apk add --no-cache curl xz && \
     curl -fsSL \
         https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz \
@@ -57,7 +58,7 @@ RUN if getent group "${GID}" >/dev/null; then \
     elif id -u "${USER}" >/dev/null 2>&1; then \
         usermod -u "${UID}" -g "${GID}" -s "${SHELL}" -d "/home/${USER}" -m "${USER}"; \
     else \
-        useradd -u "${UID}" -g "${GID}" -s "${SHELL}" -m "${USER}"; \
+        useradd -l -u "${UID}" -g "${GID}" -s "${SHELL}" -m "${USER}"; \
     fi; \
     \
     mkdir -p /etc/sudoers.d; \
@@ -138,7 +139,7 @@ COPY --chmod=0644 config/realsense/99-realsense-libusb.rules /etc/udev/rules.d/
 USER "${USER}"
 
 # Setup pip packages
-RUN PIP_BREAK_SYSTEM_PACKAGES=1 pip install -r "${CONFIG_DIR}"/pip/requirements.txt
+RUN PIP_BREAK_SYSTEM_PACKAGES=1 pip install --no-cache-dir -r "${CONFIG_DIR}"/pip/requirements.txt
 
 # Setup shell, terminator, tmux
 RUN cat "${CONFIG_DIR}"/shell/bashrc >> "${HOME}/.bashrc" && \
@@ -173,7 +174,8 @@ COPY script/*.sh /lint/
 COPY .base/script/docker/*.sh /lint/
 COPY .base/script/docker/lib /lint/lib
 RUN shellcheck -S warning /lint/*.sh /lint/lib/*.sh
-RUN cd /lint && hadolint Dockerfile
+WORKDIR /lint
+RUN hadolint Dockerfile
 
 # Install bats
 COPY --from=bats-src /opt/bats /opt/bats
