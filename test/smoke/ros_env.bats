@@ -19,6 +19,17 @@ setup() {
     assert_success
 }
 
+@test "interactive shells source ROS (roslaunch on PATH via bashrc.d)" {
+    # The base bashrc is ROS-agnostic and loads ~/.bashrc.d/*.sh for interactive
+    # shells; this repo ships config/shell/bashrc.d/10-ros-source.sh to source
+    # ROS. Without it, roslaunch / roscore / realsense-viewer are "command not
+    # found" in interactive just run / just exec shells even though installed.
+    assert [ -f "${HOME}/.bashrc.d/10-ros-source.sh" ]
+    run bash -c "source ${HOME}/.bashrc.d/10-ros-source.sh && command -v roslaunch"
+    assert_success
+    assert_output --partial "/opt/ros/${ROS_DISTRO}/bin/roslaunch"
+}
+
 # -------------------- RealSense packages --------------------
 
 @test "realsense2_camera is installed" {
