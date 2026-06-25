@@ -7,6 +7,13 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+- Legacy `.env.example`. base v0.41.0's `detect_image_name` resolves
+  `IMAGE_NAME` from `config/docker/setup.conf` `[image]` rules (here the
+  `@basename` fallback -> `realsense_ros1`), so the committed `.env.example`
+  fallback is no longer read. Verified: `just setup apply` emits
+  `IMAGE_NAME=realsense_ros1` to `.env.generated` without it (#56).
+
 ### Added
 - `LICENSE` (Apache 2.0) and CI / License badges in
   `README.md` + 3 translated READMEs (#40). Fresh add
