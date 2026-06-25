@@ -13,6 +13,25 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   -- repo previously had no LICENSE and no badges. Aligns with
   the org-wide Apache 2.0 migration tracked across 17 sister
   repos.
+- `doc/adr/00000001-realsense-requires-privileged.md` (this repo's first
+  repo-specific ADR): records why the RealSense containers keep
+  `privileged = true` (the full D4xx feature set -- V4L2 streaming + HID/IIO
+  IMU -- needs privileged-level access; a `privileged = false` config was tested
+  end-to-end on a D455 and rejected as fragile). ROS 1 sibling of the
+  realsense_ros2 ADR (#64).
+
+### Changed
+- `config/docker/setup.conf`: remove the dead `cap_add`
+  (`SYS_ADMIN`/`NET_ADMIN`/`MKNOD`) and `security_opt` (`seccomp:unconfined`)
+  entries -- under `privileged = true` they are no-ops (#64). Move `/dev` from a
+  `[devices]` snapshot to a `[volumes]` live bind so hot-plug / firmware-DFU
+  re-enumeration is visible without a container restart. `privileged = true` is
+  kept and documented (rationale in
+  `doc/adr/00000001-realsense-requires-privileged.md`); hardware testing on a
+  D455 confirmed the full feature set needs it.
+- `config/docker/setup.conf`: migrate the `[deploy] runtime` key to its
+  v0.41.0 name `gpu_runtime` (base#481; the old key is a permanent alias, but
+  align before the v1.0.0 removal) (#58).
 
 ### Fixed
 - revert display mount to XDG_RUNTIME_DIR:rw
