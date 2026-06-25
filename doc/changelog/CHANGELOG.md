@@ -15,6 +15,11 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `IMAGE_NAME=realsense_ros1` to `.env.generated` without it (#56).
 
 ### Added
+- `ros-${ROS_DISTRO}-desktop` in the `devel` image (#61): rviz + rqt (incl.
+  `rqt_image_view`) + the Qt/OpenGL/X stack the GUI tools need. The README RGB-D
+  demo's visual step (`rosrun rqt_image_view rqt_image_view` from `devel`) now
+  has the binary it documents. The minimal `runtime` image stays on `ros-base`.
+  Guarded by a new `ros_env.bats` test. ROS 1 parity with realsense_ros2.
 - `LICENSE` (Apache 2.0) and CI / License badges in
   `README.md` + 3 translated READMEs (#40). Fresh add
   -- repo previously had no LICENSE and no badges. Aligns with

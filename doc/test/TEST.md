@@ -1,6 +1,6 @@
 # TEST.md
 
-**60 tests** total.
+**61 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -19,6 +19,12 @@
 |------|-------------|
 | `realsense2_camera is installed` | `ros-${ROS_DISTRO}-realsense2-camera` package installed |
 | `realsense2_description is installed` | `ros-${ROS_DISTRO}-realsense2-description` package installed |
+
+### Desktop GUI (devel) (1)
+
+| Test | Description |
+|------|-------------|
+| `rqt_image_view is available (devel GUI; backs the README demo)` | `ros-${ROS_DISTRO}-rqt-image-view` installed (via `ros-${ROS_DISTRO}-desktop`) |
 
 ### Base tools (4)
 
