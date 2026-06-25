@@ -1,18 +1,20 @@
 # Intel RealSense Docker Container (ROS 1 Noetic)
 
-[![CI](https://github.com/ycpss91255-docker/realsense_noetic/actions/workflows/main.yaml/badge.svg)](https://github.com/ycpss91255-docker/realsense_noetic/actions/workflows/main.yaml) [![License](https://img.shields.io/badge/License-Apache--2.0-blue?style=flat-square)](./LICENSE)
-
-[![CI](https://github.com/ycpss91255-docker/realsense_noetic/actions/workflows/main.yaml/badge.svg)](https://github.com/ycpss91255-docker/realsense_noetic/actions/workflows/main.yaml)
+[![CI](https://github.com/ycpss91255-docker/realsense_ros1/actions/workflows/main.yaml/badge.svg)](https://github.com/ycpss91255-docker/realsense_ros1/actions/workflows/main.yaml) [![License](https://img.shields.io/badge/License-Apache--2.0-blue?style=flat-square)](./LICENSE)
 
 **[English](README.md)** | **[繁體中文](doc/README.zh-TW.md)** | **[简体中文](doc/README.zh-CN.md)** | **[日本語](doc/README.ja.md)**
 
 ## TL;DR
 
-Containerized Intel RealSense driver for ROS 1 Noetic. Installs `realsense2_camera` and `librealsense2` from apt, includes udev rules for device access.
+An Intel RealSense camera **as a containerized ROS 1 app**: the `runtime` image's default command launches the camera node and publishes live **RGB + depth** topics. Installs `ros-noetic-realsense2-camera` / `ros-noetic-realsense2-description` from apt (pulling in `librealsense2`) and ships the udev rules for USB access. **Noetic (Ubuntu 20.04 focal) only**, multi-arch (x86_64 + ARM64 / Raspberry Pi).
 
 ```bash
-./build.sh && ./run.sh
+./script/install_udev_rules.sh      # once on the host (physical camera)
+just build && just run -t runtime    # build + launch the camera app
+# -> logs show "RealSense Node Is Up!" and depth/color streaming
 ```
+
+> `just run` on its own opens the **devel** dev shell, not the camera app -- use `just run -t runtime`. See [Quick Start](#quick-start) to view the RGB-D streams.
 
 ---
 
@@ -20,8 +22,10 @@ Containerized Intel RealSense driver for ROS 1 Noetic. Installs `realsense2_came
 
 - [Overview](#overview)
 - [Features](#features)
+- [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [Usage](#usage)
+- [Uninstall / Cleanup](#uninstall--cleanup)
 - [Configuration](#configuration)
 - [Architecture](#architecture)
 - [Smoke Tests](#smoke-tests)
@@ -31,68 +35,226 @@ Containerized Intel RealSense driver for ROS 1 Noetic. Installs `realsense2_came
 
 ## Overview
 
-Provides a reproducible ROS 1 Noetic environment for Intel RealSense depth cameras. The container installs `realsense2_camera` and `librealsense2` from the ROS apt repository and ships with the upstream udev rules baked in so USB devices come up under the correct permissions inside the container. Multi-arch base image supports x86_64 and ARM64 (Raspberry Pi, Jetson CPU mode).
+Provides a reproducible ROS 1 environment for Intel RealSense depth cameras. CI
+builds the image for **ROS 1 Noetic (Ubuntu 20.04 focal)** -- this is a
+single-distro repo; ROS 1 Kinetic is **out of scope**. It installs
+`ros-noetic-realsense2-camera` and `ros-noetic-realsense2-description` from the
+ROS apt repository (the `librealsense2` libraries come in transitively as their
+dependency) and ships with the upstream udev rules baked in so USB devices come
+up under the correct permissions inside the container. The multi-arch base image
+supports x86_64 and ARM64 (Raspberry Pi, Jetson CPU mode).
 
 ## Features
 
-- **Apt-based install**: `realsense2_camera` and `librealsense2` from ROS apt repository
+- **Single distro**: ROS 1 Noetic (Ubuntu 20.04 focal); Kinetic is out of scope
+- **Apt-based install**: `ros-noetic-realsense2-camera` and `ros-noetic-realsense2-description` from the ROS apt repository (`librealsense2` pulled in transitively)
 - **Smoke Test**: Bats tests run automatically during build to verify environment
 - **Docker Compose**: single `compose.yaml` manages all targets
 - **udev rules**: Pre-configured for RealSense USB device access
 - **Multi-arch**: Supports x86_64 and ARM64 (RPi, Jetson CPU mode)
 
+## Prerequisites
+
+The user entry point is `just`, which drives Docker. Install these on the host once:
+
+- **Docker Engine + Compose plugin.** The wrappers call `docker compose`, so the
+  Compose plugin must be present. The official convenience script installs Engine +
+  Buildx + Compose together:
+
+  ```bash
+  curl -fsSL https://get.docker.com | sudo sh
+  sudo usermod -aG docker "$USER"   # log out/in so docker runs without sudo
+  ```
+
+  Verify with `docker compose version`. (Distro packages alone may omit Compose --
+  e.g. `docker.io` without `docker-compose-v2` yields `docker: unknown command:
+  docker compose`.)
+
+- **just** (command runner). Prebuilt binary into `~/.local/bin`, no sudo:
+
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to ~/.local/bin
+  ```
+
+  Ensure `~/.local/bin` is on `PATH`, then verify with `just --version`. Every recipe
+  also has a raw fallback (`./script/<verb>.sh`) if you prefer not to install `just`.
+
+- **(Physical camera) host udev rules.** To use a real RealSense over USB, install
+  the bundled rules on the host (see [RealSense udev Rules](#realsense-udev-rules)):
+
+  ```bash
+  ./script/install_udev_rules.sh
+  ```
+
+  Without them the non-root container user cannot open the raw USB node and the SDK
+  misdetects the camera -- e.g. a USB 3 device enumerating as USB 2.1 ("Reduced
+  performance expected").
+
 ## Quick Start
 
 ```bash
 # 1. Build
-./build.sh
+just build
 
-# 2. Run (default: roslaunch realsense2_camera rs_camera.launch)
-./run.sh
+# 2. (physical camera) install the host udev rules once
+./script/install_udev_rules.sh
 
-# Or use docker compose directly
-docker compose up runtime
-docker compose down
+# 3. Launch the camera app. The `runtime` service's default command is
+#    `roslaunch realsense2_camera rs_camera.launch`; foreground shows the node logs:
+just run -t runtime
+#    ...or detached:
+just run -d -t runtime
 ```
+
+> Use-only deployment (e.g. a Raspberry Pi that just runs the camera) can skip
+> step 1: `just build` builds the **devel** image (full dev tooling -- larger)
+> for development. `just run -t runtime` auto-builds the minimal runtime image on
+> first use, so the camera app needs no prior `just build`.
+
+### See the RGB-D data
+
+**CLI** -- confirm the colour + depth topics are streaming (interactive exec has `roslaunch`/`rostopic`):
+
+```bash
+just exec -t runtime bash -ic 'rostopic hz /camera/color/image_raw'
+just exec -t runtime bash -ic 'rostopic hz /camera/depth/image_rect_raw'
+```
+
+**Visual** -- view the image streams with `rqt` (the `devel` image ships `rqt_image_view`):
+
+```bash
+just run -t devel
+# inside the container:
+roslaunch realsense2_camera rs_camera.launch &   # start the camera
+rosrun rqt_image_view rqt_image_view             # pick /camera/color/image_raw and /camera/depth/image_rect_raw
+```
+
+> `just run` with no `-t` opens the **devel** dev shell, not the camera app -- use
+> `just run -t runtime` for the app. To override the launch (e.g. enable the point
+> cloud), use the low-level command, which replaces the default launch:
+> `docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch filters:=pointcloud`.
+> The `just run -t runtime <cmd>` form of overriding is broken upstream and being
+> fixed ([base#679](https://github.com/ycpss91255-docker/base/issues/679)). More
+> low-level equivalents are in [Usage](#usage).
+
+> **USB 2.x:** if the camera log shows `Reduced performance ... 2.1 port` and the
+> topics carry no data, the link negotiated USB 2.x and the default profile is too
+> heavy. Use a lower profile, e.g.
+> `docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch depth_width:=480 depth_height:=270 depth_fps:=6 color_width:=424 color_height:=240 color_fps:=6`
+> (tested on a D435 over USB 2 -- RGB + depth stream at ~6 Hz). For the full default
+> profile use a USB 3 cable into a SuperSpeed port directly on the host, not via a hub.
 
 ## Usage
 
 ### Runtime
 
-```bash
-./build.sh                       # Build (default: runtime)
-./build.sh --no-env test         # Build without refreshing .env
-./run.sh                         # Start (default: runtime)
-./exec.sh                        # Enter running container
-./stop.sh                        # Stop and remove containers
+The user entry point is `just` (the repo-root `justfile` symlinks into the base
+subtree). Recipes forward 1:1 to the wrapper scripts under `script/` with full
+argument passthrough -- no `--` separator needed.
 
-docker compose build runtime     # Equivalent command
+```bash
+just build                       # Build (default: devel)
+just build test                  # Build the devel-test gate
+just run                         # Start (e.g. just run -d)
+just exec                        # Enter running container
+just stop                        # Stop and remove containers
+just setup                       # Regenerate .env + compose.yaml from setup.conf
+
+docker compose build runtime     # Equivalent low-level command
 docker compose up runtime        # Start
 docker compose exec runtime bash # Enter running container
 ```
 
-### Testing (test)
+### Custom launch args
 
-Smoke tests run automatically during build; build fails if tests fail.
+The `runtime` image's default command is `roslaunch realsense2_camera
+rs_camera.launch`. To pass launch args, use the low-level `docker compose run`
+form, which replaces the default launch:
 
 ```bash
-./build.sh test
+# Enable the point cloud
+docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch filters:=pointcloud
+
+# Align depth to colour
+docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch align_depth:=true
+
+# Reduced profile for a USB 2.x link (~6 Hz)
+docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch \
+  depth_width:=480 depth_height:=270 depth_fps:=6 \
+  color_width:=424 color_height:=240 color_fps:=6
+```
+
+The `just run -t runtime <cmd>` override form is broken upstream
+([base#679](https://github.com/ycpss91255-docker/base/issues/679)), so prefer the
+`docker compose run` form above.
+
+### Smoke tests (test stages)
+
+Smoke tests run automatically during build; the build fails if tests fail. The
+`devel-test` stage runs lint (ShellCheck + Hadolint) plus the bats suite, and
+the `runtime-test` stage runs a check over the runtime image.
+
+```bash
+just build test
 # or
 docker compose --profile test build test
 ```
 
+## Uninstall / Cleanup
+
+```bash
+just stop      # stop and remove the running containers
+just prune     # remove this repo's images + dangling build cache (see `just prune -h`)
+```
+
+To fully remove what the repo placed on the host:
+
+- **Images / build cache:** `just prune` (or `docker image rm <tag>` for a specific image).
+- **Host udev rules** (only if you installed them):
+
+  ```bash
+  sudo rm -f /etc/udev/rules.d/99-realsense-libusb.rules
+  sudo udevadm control --reload-rules && sudo udevadm trigger
+  ```
+
+- **The repo:** delete the cloned directory.
+
 ## Configuration
 
-### .env Parameters
+### Configuration surface (setup.conf)
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `DOCKER_HUB_USER` | Docker Hub username | `myuser` |
-| `IMAGE_NAME` | Image name | `realsense_noetic` |
+The real configuration surface is `config/docker/setup.conf`. `just setup`
+generates `.env` and `compose.yaml` from it, so `.env` is a generated artifact
+and should not be hand-edited. Edit `setup.conf` (or `just setup-tui`) and
+re-run `just setup`.
+
+`setup.conf` is organised into sections -- `[image]`, `[build]`, `[deploy]`,
+`[gui]`, `[network]`, `[security]`, `[resources]`, `[environment]`, `[tmpfs]`,
+`[devices]`, `[volumes]`. For example, the `[deploy]` section carries the GPU
+runtime keys (`gpu_mode`, `gpu_count`, `gpu_capabilities`, `gpu_runtime`), and
+`[image]` derives the image name from naming rules rather than a literal
+`image_name` key.
 
 ### RealSense udev Rules
 
-The container includes udev rules at `/etc/udev/rules.d/99-realsense-libusb.rules` for RealSense USB device access. The container runs in `privileged` mode with `/dev` mounted.
+The udev rules must be installed on the **host**, not just inside the container.
+The container has no `udevd`, and a device node's permissions live on the host
+`devtmpfs` inode shared through the `/dev` bind mount, so the in-image copy of
+the rules does nothing on its own. Without the host rules the non-root container
+user cannot open the raw USB node and the SDK misdetects the camera (reports USB
+2.0, `Product Line not supported`, or fails firmware updates). See
+[IntelRealSense/librealsense#12022](https://github.com/IntelRealSense/librealsense/issues/12022).
+
+Install them once on the host with the bundled script (uses `sudo`):
+
+```bash
+./script/install_udev_rules.sh
+```
+
+It copies `config/realsense/99-realsense-libusb.rules` to `/etc/udev/rules.d/`
+and reloads udev. Re-plug the camera afterwards. The container itself runs in
+`privileged` mode with `/dev` mounted (see
+[doc/adr/00000001-realsense-requires-privileged.md](doc/adr/00000001-realsense-requires-privileged.md)).
 
 ## Architecture
 
@@ -100,63 +262,85 @@ The container includes udev rules at `/etc/udev/rules.d/99-realsense-libusb.rule
 
 ```mermaid
 graph TD
-    EXT1["bats/bats:latest"]
-    EXT2["alpine:latest"]
-    EXT3["ros:noetic-ros-base-focal"]
+    EXT1["test-tools image\n(ghcr test-tools or test-tools:local)"]
+    EXT2["ros:noetic-ros-base-focal"]
 
-    EXT1 --> bats-src["bats-src"]
-    EXT2 --> bats-ext["bats-extensions"]
+    EXT1 --> ttstage["test-tools-stage"]
 
-    EXT3 --> runtime["runtime\nrealsense2_camera + librealsense2 + udev rules"]
+    EXT2 --> sys["sys"]
 
-    bats-src --> test["test (ephemeral)\nsmoke tests, discarded after build"]
-    bats-ext --> test
-    runtime --> test
+    sys --> develbase["devel-base"]
+    develbase --> devel["devel\n(shipped)"]
+    devel --> develtest["devel-test (ephemeral)\nlint + bats /smoke_test/"]
 
+    sys --> runtimebase["runtime-base"]
+    runtimebase --> runtime["runtime\n(shipped)\nrealsense2_camera + udev rules"]
+    runtime --> runtimetest["runtime-test (ephemeral)\nruntime smoke"]
+
+    ttstage --> develtest
 ```
 
 ### Stage Description
 
 | Stage | FROM | Purpose |
 |-------|------|---------|
-| `bats-src` | `bats/bats:latest` | Bats binary source, not shipped |
-| `bats-extensions` | `alpine:latest` | bats-support, bats-assert, not shipped |
-| `lint-tools` | `alpine:latest` | ShellCheck + Hadolint, not shipped |
-| `runtime` | `ros:noetic-ros-base-focal` | RealSense packages + udev rules |
-| `test` | `runtime` | Lints + smoke tests, discarded after build |
+| `test-tools-stage` | `${TEST_TOOLS_IMAGE}` (multi-arch ghcr test-tools, or `test-tools:local`) | ShellCheck + Hadolint + Bats, not shipped |
+| `sys` | `ros:noetic-ros-base-focal` | Common base: user, locale, timezone (base v0.41.0 build contract) |
+| `devel-base` | `sys` | Dev tools + ROS 1 Noetic + RealSense packages |
+| `devel` | `devel-base` | Shipped dev image (default CMD `bash`) |
+| `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests, discarded after build (ephemeral) |
+| `runtime-base` | `sys` | Minimal base (`sudo`, `tini`) |
+| `runtime` | `runtime-base` | Shipped runtime image: RealSense packages + udev rules (default CMD `roslaunch realsense2_camera rs_camera.launch`) |
+| `runtime-test` | `runtime` | runtime smoke, discarded after build (ephemeral) |
 
 ## Smoke Tests
 
-See [TEST.md](doc/test/TEST.md) for details.
+See [TEST.md](doc/test/TEST.md) for the automatic build-time tests,
+[CAMERA.md](doc/CAMERA.md) for testing with a physical camera, and
+[CALIBRATION.md](doc/CALIBRATION.md) for the Dynamic Calibration Tool.
 
 ## Directory Structure
 
 ```text
-realsense_noetic/
-├── compose.yaml                 # Docker Compose definition
+realsense_ros1/
 ├── Dockerfile                   # Multi-stage build
-├── build.sh                     # Build script
-├── run.sh                       # Run script
-├── exec.sh                      # Enter running container
-├── stop.sh                      # Stop and remove containers
-├── .env.example                 # Environment variable template
-├── .hadolint.yaml               # Hadolint ignore rules
+├── LICENSE
+├── README.md
+├── justfile -> .base/script/docker/justfile        # symlink (user entry point)
+├── .hadolint.yaml -> .base/.hadolint.yaml          # symlink
+├── .base/                       # base subtree (read-only)
 ├── script/
-│   └── entrypoint.sh            # Container entrypoint
+│   ├── entrypoint.sh            # Container entrypoint (repo-owned)
+│   ├── install_udev_rules.sh    # Install RealSense udev rules on the host (repo-owned)
+│   ├── build.sh -> ../.base/script/docker/wrapper/build.sh   # symlink
+│   ├── run.sh   -> ../.base/script/docker/wrapper/run.sh     # symlink
+│   ├── exec.sh  -> ../.base/script/docker/wrapper/exec.sh    # symlink
+│   ├── stop.sh  -> ../.base/script/docker/wrapper/stop.sh    # symlink
+│   ├── prune.sh -> ../.base/script/docker/wrapper/prune.sh   # symlink
+│   ├── setup.sh -> ../.base/script/docker/wrapper/setup.sh   # symlink
+│   ├── setup_tui.sh -> ../.base/script/docker/wrapper/setup_tui.sh  # symlink
+│   └── hooks/                   # pre/ + post/ wrapper hooks
 ├── config/
+│   ├── docker/
+│   │   └── setup.conf           # configuration surface (.env/compose.yaml generated from this)
+│   ├── shell/
+│   │   └── bashrc.d/10-ros-source.sh  # source ROS for interactive shells
 │   └── realsense/
 │       └── 99-realsense-libusb.rules  # RealSense udev rules
 ├── doc/
 │   ├── README.zh-TW.md          # Traditional Chinese
 │   ├── README.zh-CN.md          # Simplified Chinese
-│   └── README.ja.md             # Japanese
-├── .github/workflows/           # CI/CD
-│   ├── main.yaml                # Main pipeline
-│   ├── build-worker.yaml        # Docker build + smoke test
-│   └── release-worker.yaml      # GitHub Release
+│   ├── README.ja.md             # Japanese
+│   ├── adr/                     # Architecture Decision Records
+│   ├── CAMERA.md                # manual testing with a physical camera
+│   ├── CALIBRATION.md           # Dynamic Calibration Tool guide
+│   ├── changelog/CHANGELOG.md
+│   └── test/
+│       └── TEST.md              # automatic build-time smoke tests
+├── .github/workflows/
+│   └── main.yaml                # CI (calls base reusable build/release workers)
 └── test/
-    └── smoke/              # Bats environment tests
+    └── smoke/                   # repo-owned bats tests
         ├── ros_env.bats
-        ├── script_help.bats
-        └── test_helper.bash
+        └── install_udev_rules.bats   # (helper + more .bats come from .base/test/smoke/)
 ```

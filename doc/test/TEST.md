@@ -1,6 +1,6 @@
 # TEST.md
 
-**49 tests** total.
+**60 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -11,7 +11,7 @@
 | `ROS_DISTRO is set` | ROS_DISTRO environment variable is set |
 | `ROS 1 setup.bash exists` | `/opt/ros/${ROS_DISTRO}/setup.bash` exists |
 | `ROS 1 setup.bash can be sourced` | ROS 1 setup script sources without error |
-| `interactive shells source ROS (roslaunch on PATH via bashrc.d)` | `config/shell/bashrc.d/10-ros-source.sh` puts `roslaunch` on PATH in interactive shells |
+| `interactive shells source ROS (roslaunch on PATH via bashrc.d)` | `config/shell/bashrc.d/10-ros-source.sh` puts `roslaunch` on PATH for interactive shells |
 
 ### RealSense packages (2)
 
@@ -29,7 +29,7 @@
 | `sudo is available` | sudo command works |
 | `sudo passwordless works` | sudo runs without password |
 
-### System (7)
+### System (6)
 
 | Test | Description |
 |------|-------------|
@@ -39,6 +39,11 @@
 | `LANG is en_US.UTF-8` | LANG locale set |
 | `LC_ALL is en_US.UTF-8` | LC_ALL locale set |
 | `entrypoint.sh exists and executable` | `/entrypoint.sh` is executable |
+
+### RealSense udev rules (1)
+
+| Test | Description |
+|------|-------------|
 | `RealSense udev rules exist` | udev rules file exists |
 
 ### Workspace (1)
@@ -53,28 +58,30 @@
 
 | Test | Description |
 |------|-------------|
-| `install_udev_rules.sh -h exits 0` | Help flag exits successfully |
-| `install_udev_rules.sh --help exits 0` | Long help flag exits successfully |
+| `install_udev_rules.sh -h exits 0` | Help exits successfully |
+| `install_udev_rules.sh --help exits 0` | Help exits successfully |
 | `install_udev_rules.sh -h prints usage` | Help output contains "Usage:" |
-| `install_udev_rules.sh is executable` | Script carries the executable bit (regression: shipped 0644 once) |
+| `install_udev_rules.sh is executable` | Script carries the executable bit so the documented `./script/install_udev_rules.sh` works |
 
-## template/test/smoke/script_help.bats
+## .base/test/smoke/script_help.bats
 
-### build.sh (3)
+### build.sh (4)
 
 | Test | Description |
 |------|-------------|
 | `build.sh -h exits 0` | Help exits successfully |
 | `build.sh --help exits 0` | Help exits successfully |
 | `build.sh -h prints usage` | Help output contains "Usage:" |
+| `build.sh -h describes auto-apply default (no stale 'warn on drift', #365)` | Help describes auto-apply default |
 
-### run.sh (3)
+### run.sh (4)
 
 | Test | Description |
 |------|-------------|
 | `run.sh -h exits 0` | Help exits successfully |
 | `run.sh --help exits 0` | Help exits successfully |
 | `run.sh -h prints usage` | Help output contains "Usage:" |
+| `run.sh -h describes auto-apply default (no stale 'warn on drift', #365)` | Help describes auto-apply default |
 
 ### exec.sh (3)
 
@@ -101,7 +108,21 @@
 | `build.sh defaults to en for LANG=en_US.UTF-8` | Defaults to English |
 | `build.sh SETUP_LANG overrides LANG` | SETUP_LANG takes priority |
 
-## template/test/smoke/display_env.bats
+### Help --lang override (9)
+
+| Test | Description |
+|------|-------------|
+| `build.sh --help --lang zh-TW prints zh-TW usage (#222)` | build.sh zh-TW help |
+| `build.sh --help --lang zh-CN prints zh-CN usage (#222)` | build.sh zh-CN help |
+| `build.sh --help --lang ja prints ja usage (#222)` | build.sh ja help |
+| `run.sh --help --lang zh-TW prints zh-TW usage (#222)` | run.sh zh-TW help |
+| `run.sh --help --lang ja prints ja usage (#222)` | run.sh ja help |
+| `exec.sh --help --lang zh-TW prints zh-TW usage (#222)` | exec.sh zh-TW help |
+| `exec.sh --help --lang ja prints ja usage (#222)` | exec.sh ja help |
+| `stop.sh --help --lang zh-TW prints zh-TW usage (#222)` | stop.sh zh-TW help |
+| `stop.sh --help --lang ja prints ja usage (#222)` | stop.sh ja help |
+
+## .base/test/smoke/display_env.bats
 
 ### Wayland env vars (3)
 

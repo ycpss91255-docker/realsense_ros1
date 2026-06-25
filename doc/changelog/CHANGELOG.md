@@ -31,6 +31,25 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `just exec` shells (the base bashrc is ROS-agnostic). Guarded by a new
   `ros_env.bats` test. nounset-safe (ROS 1 `setup.bash` reads `$ROS_MASTER_URI`)
   (#61, base#657).
+- README TL;DR + Quick Start now demonstrate the actual RGB-D **app**: `just run
+  -t runtime` launches the camera node (default CMD `roslaunch realsense2_camera
+  rs_camera.launch`), with a CLI check (`rostopic hz` on the colour + depth
+  topics `/camera/color/image_raw` and `/camera/depth/image_rect_raw`) and a
+  visual demo (`rqt_image_view` in the `devel` image) to see RGB + depth.
+  Clarifies `just run` (devel shell) vs `just run -t runtime` (the app). All 4
+  languages (#68).
+- README **Prerequisites** (install Docker Engine + Compose plugin + `just`;
+  plus host udev rules for a physical camera) and **Uninstall / Cleanup**
+  (`just stop`, `just prune`, host udev-rule removal) sections, in all 4
+  languages (#68). ROS 1 parity with realsense_ros2 #85.
+- `doc/CALIBRATION.md` (Dynamic Calibration Tool guide -- targeted rectification,
+  depth scale, and RGB extrinsics; the residual depth<->color alignment error and
+  why it's worse on the D455) and `doc/CAMERA.md` (manual physical-camera test
+  procedure with the ROS 1 `roslaunch` / `rostopic` workflow, plus on-chip
+  calibration and the health-check score). Linked from `README.md` + 3 translated
+  READMEs (#70). Adapted from realsense_ros2; CALIBRATION.md notes the tool is
+  **not yet bundled** in the focal-based ROS 1 `devel` image (the donor bundles
+  the amd64 `pool/jammy` `.deb`; a focal build is deferred to a follow-up).
 
 ### Changed
 - `config/docker/setup.conf`: remove the dead `cap_add`
@@ -46,6 +65,29 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   align before the v1.0.0 removal) (#58).
 
 ### Fixed
+- README (4 languages) re-synced to the actual code (#63): commands now use
+  `just` recipes instead of the removed `./build.sh` / `./run.sh`; removed the
+  duplicate CI badge; corrected the install claim (only
+  `ros-noetic-realsense2-camera` / `-description` are apt-installed,
+  `librealsense2` comes in transitively); refreshed the architecture diagram +
+  stage table to the real stages (`sys`, `devel-base`, `devel`, `devel-test` via
+  `test-tools-stage`, `runtime-base`, `runtime`, `runtime-test`) -- dropping the
+  stale `bats-src` / `bats-extensions` / `lint-tools` stages (removed in #72);
+  fixed the directory tree (`justfile`, `setup.conf`, `.base/` not `template/`,
+  `script/install_udev_rules.sh`, `doc/CALIBRATION.md`, `doc/CAMERA.md`,
+  `doc/adr/`); added a note that only **Noetic** is built/tested and **Kinetic is
+  out of scope**. Custom launch args now use the working low-level form
+  `docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch
+  <args>` (the `just run -t runtime <cmd>` override is broken upstream,
+  [base#679](https://github.com/ycpss91255-docker/base/issues/679)), with a
+  USB 2.x reduced-profile note using verified ROS 1 arg names
+  (`depth_width:=480 depth_height:=270 depth_fps:=6 color_width:=424
+  color_height:=240 color_fps:=6`, ~6 Hz on a D435).
+- `doc/test/TEST.md` re-synced to the actual smoke suite (#63): `template/`
+  paths corrected to `.base/`, and the documented rows + total now match the
+  **60** tests that actually run (18 `ros_env.bats` + 4
+  `install_udev_rules.bats` + 27 `.base/.../script_help.bats` + 11
+  `.base/.../display_env.bats`).
 - revert display mount to XDG_RUNTIME_DIR:rw
 - use tmpfs for XDG_RUNTIME_DIR + Wayland socket mount
 - Restore `.env.example` (removed during APT-mirror refactor) so `setup.sh`'s IMAGE_NAME detection has its documented fallback. Without this, any checkout under a non-`docker_*` / non-`*_ws` directory name falls through to `IMAGE_NAME=unknown`.

@@ -2,19 +2,30 @@
 
 # Intel RealSense Docker コンテナ（ROS 1 Noetic）
 
-[![CI](https://github.com/ycpss91255-docker/realsense_noetic/actions/workflows/main.yaml/badge.svg)](https://github.com/ycpss91255-docker/realsense_noetic/actions/workflows/main.yaml) [![License](https://img.shields.io/badge/License-Apache--2.0-blue?style=flat-square)](../LICENSE)
+[![CI](https://github.com/ycpss91255-docker/realsense_ros1/actions/workflows/main.yaml/badge.svg)](https://github.com/ycpss91255-docker/realsense_ros1/actions/workflows/main.yaml) [![License](https://img.shields.io/badge/License-Apache--2.0-blue?style=flat-square)](../LICENSE)
 
-> **TL;DR** — コンテナ化された Intel RealSense ROS 1 Noetic ドライバ。apt で `realsense2_camera` と `librealsense2` をインストールし、デバイスアクセス用の udev ルールを含みます。
->
-> ```bash
-> ./build.sh && ./run.sh
-> ```
+## TL;DR
+
+コンテナ化された ROS 1 RealSense カメラ **アプリ**：`runtime` イメージのデフォルトコマンドがカメラノードを launch し、リアルタイムの **RGB + Depth** トピックを配信します。apt から `ros-noetic-realsense2-camera` と `ros-noetic-realsense2-description` をインストールし（これにより `librealsense2` が依存関係として推移的に取り込まれます）、USB アクセス用の udev ルールを同梱します。**Noetic（Ubuntu 20.04 focal）のみ**、マルチアーキ（x86_64 + ARM64 / Raspberry Pi）。
+
+```bash
+./script/install_udev_rules.sh      # once on the host (physical camera)
+just build && just run -t runtime    # build + launch the camera app
+# -> logs show "RealSense Node Is Up!" and depth/color streaming
+```
+
+> `just run` 単体は **devel** 開発シェルを開くだけでカメラアプリではありません -- `just run -t runtime` を使ってください。RGB-D ストリームの確認は [クイックスタート](#クイックスタート) を参照。
+
+---
 
 ## 目次
 
+- [概要](#概要)
 - [機能](#機能)
+- [前提条件](#prerequisites)
 - [クイックスタート](#クイックスタート)
 - [使い方](#使い方)
+- [アンインストール / クリーンアップ](#uninstall--cleanup)
 - [設定](#設定)
 - [アーキテクチャ](#アーキテクチャ)
 - [Smoke Tests](#smoke-tests)
@@ -22,66 +33,221 @@
 
 ---
 
+## 概要
+
+Intel RealSense 深度カメラ向けに、再現可能な ROS 1 環境を提供します。CI は **ROS 1 Noetic（Ubuntu 20.04 focal）** でイメージをビルドします -- 本リポジトリは単一ディストロで、ROS 1 Kinetic は **対象外** です。ROS apt リポジトリから `ros-noetic-realsense2-camera` と `ros-noetic-realsense2-description` パッケージをインストールし（`librealsense2` ライブラリはその依存関係として推移的に取り込まれます）、さらに上流の udev ルールを焼き込んでいるため、USB デバイスがコンテナ内で正しい権限のもとで起動します。マルチアーキテクチャのベースイメージは x86_64 と ARM64（Raspberry Pi、Jetson CPU モード）をサポートします。
+
 ## 機能
 
-- **Apt ベースのインストール**：ROS apt リポジトリから `realsense2_camera` と `librealsense2` をインストール
+- **単一ディストロ**：ROS 1 Noetic（Ubuntu 20.04 focal）；Kinetic は対象外
+- **Apt ベースのインストール**：ROS apt リポジトリから `ros-noetic-realsense2-camera` と `ros-noetic-realsense2-description`（`librealsense2` は推移的に取り込まれる）
 - **Smoke Test**：Bats テストがビルド時に自動実行され、環境を検証
 - **Docker Compose**：単一の `compose.yaml` で全ターゲットを管理
 - **udev ルール**：RealSense USB デバイスアクセス用に事前設定済み
 - **マルチアーキテクチャ**：x86_64 と ARM64（RPi、Jetson CPU モード）をサポート
 
+## Prerequisites
+
+ユーザーのエントリポイントは `just` で、これが Docker を駆動します。以下をホストに一度だけインストールしてください：
+
+- **Docker Engine + Compose plugin。** ラッパーは `docker compose` を呼び出すため、
+  Compose plugin が必要です。公式の便利スクリプトは Engine + Buildx + Compose を
+  まとめてインストールします：
+
+  ```bash
+  curl -fsSL https://get.docker.com | sudo sh
+  sudo usermod -aG docker "$USER"   # log out/in so docker runs without sudo
+  ```
+
+  `docker compose version` で確認してください。（ディストロのパッケージ単体では
+  Compose が欠けることがあります -- 例：`docker-compose-v2` なしの `docker.io` では
+  `docker: unknown command: docker compose` になります。）
+
+- **just**（コマンドランナー）。ビルド済みバイナリを `~/.local/bin` へ、sudo 不要：
+
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to ~/.local/bin
+  ```
+
+  `~/.local/bin` が `PATH` にあることを確認し、`just --version` で確認してください。
+  `just` をインストールしたくない場合のために、各レシピには生のフォールバック
+  （`./script/<verb>.sh`）も用意されています。
+
+- **（実機カメラ）ホストの udev ルール。** USB 経由で実機の RealSense を使うには、
+  付属のルールをホストにインストールします（[RealSense udev ルール](#realsense-udev-rules) を参照）：
+
+  ```bash
+  ./script/install_udev_rules.sh
+  ```
+
+  これがないと、コンテナ内の非 root ユーザーは raw USB ノードを開けず、SDK がカメラを
+  誤検出します -- 例：USB 3 デバイスが USB 2.1 として列挙される（"Reduced
+  performance expected"）。
+
 ## クイックスタート
 
 ```bash
-# 1. ビルド
-./build.sh
+# 1. Build
+just build
 
-# 2. 実行（デフォルト：roslaunch realsense2_camera rs_camera.launch）
-./run.sh
+# 2. (physical camera) install the host udev rules once
+./script/install_udev_rules.sh
 
-# または docker compose を直接使用
-docker compose up runtime
-docker compose down
+# 3. Launch the camera app. The `runtime` service's default command is
+#    `roslaunch realsense2_camera rs_camera.launch`; foreground shows the node logs:
+just run -t runtime
+#    ...or detached:
+just run -d -t runtime
 ```
+
+> カメラを使うだけのデプロイ機（例：カメラだけ動かす Raspberry Pi）は step 1 を省略できます。
+> `just build` は開発用の **devel** イメージ（フル開発ツール -- やや大きい）をビルドします。
+> `just run -t runtime` は初回利用時に最小限の runtime イメージを自動ビルドするため、
+> カメラアプリに事前の `just build` は不要です。
+
+### See the RGB-D data
+
+**CLI** -- カラー + Depth トピックが配信されているか確認します（インタラクティブな exec には `roslaunch`/`rostopic` があります）：
+
+```bash
+just exec -t runtime bash -ic 'rostopic hz /camera/color/image_raw'
+just exec -t runtime bash -ic 'rostopic hz /camera/depth/image_rect_raw'
+```
+
+**Visual** -- `rqt` で画像ストリームを表示します（`devel` イメージには `rqt_image_view` が同梱）：
+
+```bash
+just run -t devel
+# inside the container:
+roslaunch realsense2_camera rs_camera.launch &   # start the camera
+rosrun rqt_image_view rqt_image_view             # pick /camera/color/image_raw and /camera/depth/image_rect_raw
+```
+
+> `-t` なしの `just run` は **devel** 開発シェルを開くだけでカメラアプリではありません -- アプリには
+> `just run -t runtime` を使ってください。launch 引数を上書きするには（例: point cloud を有効化）、
+> デフォルトの launch を置き換える低レベルコマンドを使います：
+> `docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch filters:=pointcloud`。
+> `just run -t runtime <cmd>` 形式の上書きは upstream で壊れており、修正中です
+> （[base#679](https://github.com/ycpss91255-docker/base/issues/679)）。他の低レベルの等価コマンドは
+> [使い方](#使い方) を参照。
+
+> **USB 2.x:** カメラの log に `Reduced performance ... 2.1 port` が出てトピックにデータが
+> 流れない場合、リンクが USB 2.x でネゴシエートされ、デフォルト profile が重すぎます。
+> 低めの profile を使ってください。例：
+> `docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch depth_width:=480 depth_height:=270 depth_fps:=6 color_width:=424 color_height:=240 color_fps:=6`
+> （D435 over USB 2 で実測 -- RGB + depth が ~6 Hz で安定）。完全なデフォルト profile には、
+> hub を介さず USB 3 ケーブルでホストの SuperSpeed ポートへ直結してください。
 
 ## 使い方
 
 ### ランタイム
 
-```bash
-./build.sh                       # ビルド（デフォルト：runtime）
-./build.sh --no-env test         # .env を更新せずにビルド
-./run.sh                         # 起動（デフォルト：runtime）
-./exec.sh                        # 実行中のコンテナに入る
-./stop.sh                        # コンテナを停止・削除
+ユーザーのエントリポイントは `just` です（リポジトリルートの `justfile` は base
+サブツリーへのシンボリックリンク）。各レシピは `script/` 配下のラッパースクリプトに
+1:1 で転送され、引数はそのまま渡されます。`--` 区切りは不要です。
 
-docker compose build runtime     # 同等のコマンド
+```bash
+just build                       # ビルド（デフォルト：devel）
+just build test                  # devel-test ゲートをビルド
+just run                         # 起動（例：just run -d）
+just exec                        # 実行中のコンテナに入る
+just stop                        # コンテナを停止・削除
+just setup                       # setup.conf から .env + compose.yaml を再生成
+
+docker compose build runtime     # 同等の低レベルコマンド
 docker compose up runtime        # 起動
 docker compose exec runtime bash # 実行中のコンテナに入る
 ```
 
-### テスト（test）
+### カスタム launch 引数
 
-Smoke tests はビルド時に自動実行されます。テスト失敗時はビルドも失敗します。
+`runtime` イメージのデフォルトコマンドは `roslaunch realsense2_camera
+rs_camera.launch` です。launch 引数を渡すには、デフォルトの launch を置き換える
+低レベルの `docker compose run` 形式を使います：
 
 ```bash
-./build.sh test
+# point cloud を有効化
+docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch filters:=pointcloud
+
+# depth を color にアライン
+docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch align_depth:=true
+
+# USB 2.x リンク向けの低減 profile（~6 Hz）
+docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch \
+  depth_width:=480 depth_height:=270 depth_fps:=6 \
+  color_width:=424 color_height:=240 color_fps:=6
+```
+
+`just run -t runtime <cmd>` 形式の上書きは upstream で壊れているため
+（[base#679](https://github.com/ycpss91255-docker/base/issues/679)）、上記の
+`docker compose run` 形式を使ってください。
+
+### Smoke tests（test ステージ）
+
+Smoke tests はビルド時に自動実行されます。テスト失敗時はビルドも失敗します。
+`devel-test` ステージは lint（ShellCheck + Hadolint）と bats スイートを実行し、
+`runtime-test` ステージは runtime イメージに対してチェックを実行します。
+
+```bash
+just build test
 # または
 docker compose --profile test build test
 ```
 
+## Uninstall / Cleanup
+
+```bash
+just stop      # stop and remove the running containers
+just prune     # remove this repo's images + dangling build cache (see `just prune -h`)
+```
+
+リポジトリがホストに配置したものを完全に削除するには：
+
+- **イメージ / ビルドキャッシュ：** `just prune`（特定のイメージは `docker image rm <tag>`）。
+- **ホストの udev ルール**（インストールした場合のみ）：
+
+  ```bash
+  sudo rm -f /etc/udev/rules.d/99-realsense-libusb.rules
+  sudo udevadm control --reload-rules && sudo udevadm trigger
+  ```
+
+- **リポジトリ：** クローンしたディレクトリを削除します。
+
 ## 設定
 
-### .env パラメータ
+### 設定サーフェス（setup.conf）
 
-| 変数 | 説明 | 例 |
-|------|------|-----|
-| `DOCKER_HUB_USER` | Docker Hub ユーザー名 | `myuser` |
-| `IMAGE_NAME` | イメージ名 | `realsense_noetic` |
+実際の設定サーフェスは `config/docker/setup.conf` です。`just setup` がそこから
+`.env` と `compose.yaml` を生成するため、`.env` は生成された成果物であり、手で
+編集すべきではありません。`setup.conf` を編集（または `just setup-tui`）してから
+`just setup` を再実行してください。
+
+`setup.conf` はセクションに分かれています -- `[image]`、`[build]`、`[deploy]`、
+`[gui]`、`[network]`、`[security]`、`[resources]`、`[environment]`、`[tmpfs]`、
+`[devices]`、`[volumes]`。たとえば `[deploy]` セクションは GPU ランタイムキー
+（`gpu_mode`、`gpu_count`、`gpu_capabilities`、`gpu_runtime`）を持ち、`[image]` は
+リテラルな `image_name` キーではなく命名規則からイメージ名を導出します。
 
 ### RealSense udev ルール
 
-コンテナには `/etc/udev/rules.d/99-realsense-libusb.rules` に udev ルールが含まれており、RealSense USB デバイスへのアクセスを提供します。コンテナは `privileged` モードで実行され、`/dev` がマウントされます。
+udev ルールはコンテナ内だけでなく **ホスト** にインストールする必要があります。
+コンテナには `udevd` がなく、デバイスノードの権限は `/dev` bind mount で共有される
+ホストの `devtmpfs` inode 上にあるため、イメージに焼き込まれたルールだけでは機能
+しません。ホストのルールがないと、コンテナ内の非 root ユーザーは raw USB ノードを
+開けず、SDK がカメラを誤検出します（USB 2.0、`Product Line not supported` を報告、
+またはファームウェア更新に失敗）。[IntelRealSense/librealsense#12022](https://github.com/IntelRealSense/librealsense/issues/12022)
+を参照してください。
+
+付属スクリプトでホストに一度だけインストールします（`sudo` を使用）：
+
+```bash
+./script/install_udev_rules.sh
+```
+
+スクリプトは `config/realsense/99-realsense-libusb.rules` を `/etc/udev/rules.d/`
+にコピーして udev をリロードします。その後カメラを再接続してください。コンテナ自体は
+`privileged` モードで実行され、`/dev` がマウントされます
+（[doc/adr/00000001-realsense-requires-privileged.md](adr/00000001-realsense-requires-privileged.md) を参照）。
 
 ## アーキテクチャ
 
@@ -89,63 +255,83 @@ docker compose --profile test build test
 
 ```mermaid
 graph TD
-    EXT1["bats/bats:latest"]
-    EXT2["alpine:latest"]
-    EXT3["ros:noetic-ros-base-focal"]
+    EXT1["test-tools image\n(ghcr test-tools or test-tools:local)"]
+    EXT2["ros:noetic-ros-base-focal"]
 
-    EXT1 --> bats-src["bats-src"]
-    EXT2 --> bats-ext["bats-extensions"]
+    EXT1 --> ttstage["test-tools-stage"]
 
-    EXT3 --> runtime["runtime\nrealsense2_camera + librealsense2 + udev rules"]
+    EXT2 --> sys["sys"]
 
-    bats-src --> test["test一時的\nsmoke test、ビルド後に破棄"]
-    bats-ext --> test
-    runtime --> test
+    sys --> develbase["devel-base"]
+    develbase --> devel["devel\n(shipped)"]
+    devel --> develtest["devel-test (ephemeral)\nlint + bats /smoke_test/"]
 
+    sys --> runtimebase["runtime-base"]
+    runtimebase --> runtime["runtime\n(shipped)\nrealsense2_camera + udev rules"]
+    runtime --> runtimetest["runtime-test (ephemeral)\nruntime smoke"]
+
+    ttstage --> develtest
 ```
 
 ### ステージ説明
 
 | ステージ | FROM | 用途 |
 |----------|------|------|
-| `bats-src` | `bats/bats:latest` | Bats バイナリソース、出荷しない |
-| `bats-extensions` | `alpine:latest` | bats-support、bats-assert、出荷しない |
-| `lint-tools` | `alpine:latest` | ShellCheck + Hadolint、出荷しない |
-| `runtime` | `ros:noetic-ros-base-focal` | RealSense パッケージ + udev ルール |
-| `test` | `runtime` | Lint + smoke tests、ビルド後に破棄 |
+| `test-tools-stage` | `${TEST_TOOLS_IMAGE}`（マルチアーキの ghcr test-tools、または `test-tools:local`） | ShellCheck + Hadolint + Bats、出荷しない |
+| `sys` | `ros:noetic-ros-base-focal` | 共通ベース：ユーザー、ロケール、タイムゾーン（base v0.41.0 build contract） |
+| `devel-base` | `sys` | 開発ツール + ROS 1 Noetic + RealSense パッケージ |
+| `devel` | `devel-base` | 出荷する開発イメージ（デフォルト CMD `bash`） |
+| `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests、ビルド後に破棄（一時的） |
+| `runtime-base` | `sys` | 最小ベース（`sudo`、`tini`） |
+| `runtime` | `runtime-base` | 出荷するランタイムイメージ：RealSense パッケージ + udev ルール（デフォルト CMD `roslaunch realsense2_camera rs_camera.launch`） |
+| `runtime-test` | `runtime` | runtime smoke、ビルド後に破棄（一時的） |
 
 ## Smoke Tests
 
-詳細は [TEST.md](test/TEST.md) を参照。
+ビルド時の自動テストは [TEST.md](test/TEST.md)、実機カメラでのテストは [CAMERA.md](CAMERA.md)、動的キャリブレーションツールは [CALIBRATION.md](CALIBRATION.md) を参照。
 
 ## ディレクトリ構成
 
 ```text
-realsense_noetic/
-├── compose.yaml                 # Docker Compose 定義
+realsense_ros1/
 ├── Dockerfile                   # マルチステージビルド
-├── build.sh                     # ビルドスクリプト
-├── run.sh                       # 実行スクリプト
-├── exec.sh                      # 実行中のコンテナに入る
-├── stop.sh                      # コンテナを停止・削除
-├── .env.example                 # 環境変数テンプレート
-├── .hadolint.yaml               # Hadolint 無視ルール
+├── LICENSE
+├── README.md
+├── justfile -> .base/script/docker/justfile        # シンボリックリンク（ユーザーエントリポイント）
+├── .hadolint.yaml -> .base/.hadolint.yaml          # シンボリックリンク
+├── .base/                       # base サブツリー（読み取り専用）
 ├── script/
-│   └── entrypoint.sh            # コンテナエントリポイント
+│   ├── entrypoint.sh            # コンテナエントリポイント（リポジトリ所有）
+│   ├── install_udev_rules.sh    # ホストに RealSense udev ルールをインストール（リポジトリ所有）
+│   ├── build.sh -> ../.base/script/docker/wrapper/build.sh   # シンボリックリンク
+│   ├── run.sh   -> ../.base/script/docker/wrapper/run.sh     # シンボリックリンク
+│   ├── exec.sh  -> ../.base/script/docker/wrapper/exec.sh    # シンボリックリンク
+│   ├── stop.sh  -> ../.base/script/docker/wrapper/stop.sh    # シンボリックリンク
+│   ├── prune.sh -> ../.base/script/docker/wrapper/prune.sh   # シンボリックリンク
+│   ├── setup.sh -> ../.base/script/docker/wrapper/setup.sh   # シンボリックリンク
+│   ├── setup_tui.sh -> ../.base/script/docker/wrapper/setup_tui.sh  # シンボリックリンク
+│   └── hooks/                   # pre/ + post/ ラッパーフック
 ├── config/
+│   ├── docker/
+│   │   └── setup.conf           # 設定サーフェス（.env/compose.yaml はここから生成）
+│   ├── shell/
+│   │   └── bashrc.d/10-ros-source.sh  # インタラクティブシェル向けに ROS を source
 │   └── realsense/
 │       └── 99-realsense-libusb.rules  # RealSense udev ルール
 ├── doc/
 │   ├── README.zh-TW.md          # 繁体字中国語
 │   ├── README.zh-CN.md          # 簡体字中国語
-│   └── README.ja.md             # 日本語
-├── .github/workflows/           # CI/CD
-│   ├── main.yaml                # メインパイプライン
-│   ├── build-worker.yaml        # Docker ビルド + smoke test
-│   └── release-worker.yaml      # GitHub Release
+│   ├── README.ja.md             # 日本語
+│   ├── adr/                     # アーキテクチャ決定記録（ADR）
+│   ├── CAMERA.md                # 実機カメラでの手動テスト
+│   ├── CALIBRATION.md           # 動的キャリブレーションツール解説
+│   ├── changelog/CHANGELOG.md
+│   └── test/
+│       └── TEST.md              # ビルド時の自動 smoke テスト
+├── .github/workflows/
+│   └── main.yaml                # CI（base の再利用可能な build/release ワーカーを呼び出す）
 └── test/
-    └── smoke/              # Bats 環境テスト
+    └── smoke/                   # リポジトリ所有の bats テスト
         ├── ros_env.bats
-        ├── script_help.bats
-        └── test_helper.bash
+        └── install_udev_rules.bats   # （ヘルパーと追加の .bats は .base/test/smoke/ から）
 ```
