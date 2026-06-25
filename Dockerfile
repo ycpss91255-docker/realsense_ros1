@@ -1,35 +1,35 @@
 ARG ROS_DISTRO="noetic"
 ARG ROS_TAG="ros-base"
 ARG UBUNTU_CODENAME="focal"
-
-############################## devel-test tool sources ##############################
-FROM bats/bats:1.11.0 AS bats-src
-
-FROM alpine:3.21 AS bats-extensions
-RUN apk add --no-cache git && \
-    git clone --depth 1 -b v0.3.0 \
-        https://github.com/bats-core/bats-support /bats/bats-support && \
-    git clone --depth 1 -b v2.1.0 \
-        https://github.com/bats-core/bats-assert  /bats/bats-assert
-
-FROM alpine:3.21 AS lint-tools
-SHELL ["/bin/ash", "-o", "pipefail", "-c"]
-RUN apk add --no-cache curl xz && \
-    curl -fsSL \
-        https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz \
-        | tar -xJ -C /tmp && \
-    mv /tmp/shellcheck-v0.10.0/shellcheck /usr/local/bin/shellcheck && \
-    curl -fsSL -o /usr/local/bin/hadolint \
-        https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64 && \
-    chmod +x /usr/local/bin/hadolint
+# Pre-built lint + bats tools image (ShellCheck, Hadolint, Bats + the
+# bats-support/assert/mock extensions). Resolves to `test-tools:local` for the
+# local `just build` flow (build.sh auto-builds it from
+# .base/dockerfile/Dockerfile.test-tools) or to the multi-arch
+# ghcr.io/ycpss91255-docker/test-tools:vX.Y.Z in CI. The image is multi-arch,
+# so `FROM ${TEST_TOOLS_IMAGE}` resolves the matching variant per build
+# platform -- that is what lets the arm64 build (#65) ship arm64 lint/bats
+# binaries with no per-repo arch-aware download logic. Consuming this image
+# (instead of self-building the tools) is the template's canonical pattern
+# (Dockerfile.example); see the sibling app/realsense_ros2 for the same setup.
+ARG TEST_TOOLS_IMAGE="test-tools:local"
 
 ############################## sys ##############################
 FROM ros:${ROS_DISTRO}-${ROS_TAG}-${UBUNTU_CODENAME} AS sys
 
-ARG USER="initial"
-ARG GROUP="initial"
-ARG UID="1000"
-ARG GID="${UID}"
+# base v0.41.0 build contract: compose / CI inject USER_NAME / USER_GROUP /
+# USER_UID / USER_GID (not the legacy USER / GROUP / UID / GID). Declare the
+# new names and alias the legacy ones from them so the rest of this stage's
+# user-creation logic stays unchanged. Without this the injected build-args
+# are dropped and the image is built as the default user, breaking `just run`
+# (image HOME != compose's /home/${USER_NAME}/work mount).
+ARG USER_NAME="user"
+ARG USER_GROUP="user"
+ARG USER_UID="1000"
+ARG USER_GID="${USER_UID}"
+ARG USER="${USER_NAME}"
+ARG GROUP="${USER_GROUP}"
+ARG UID="${USER_UID}"
+ARG GID="${USER_GID}"
 ARG SHELL="/bin/bash"
 ARG HARDWARE="x86_64"
 ENV HOME="/home/${USER}"
@@ -46,7 +46,7 @@ RUN if getent group "${GID}" >/dev/null; then \
             groupmod -n "${GROUP}" "${existing_grp}"; \
         fi; \
     else \
-        groupadd -g "${GID}" "${USER}"; \
+        groupadd -g "${GID}" "${GROUP}"; \
     fi; \
     \
     if getent passwd "${UID}" >/dev/null; then \
@@ -87,6 +87,7 @@ RUN sed -i "s@archive.ubuntu.com@${APT_MIRROR_UBUNTU}@g" /etc/apt/sources.list |
 FROM sys AS devel-base
 
 ARG ROS_DISTRO
+ARG UBUNTU_CODENAME
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -108,10 +109,10 @@ RUN apt-get update && \
         python3-pip \
         python3-dev \
         python3-setuptools \
-        # ROS tools
+        # ROS 1 tools
         bash-completion \
         python3-catkin-tools \
-        # Application packages
+        # RealSense packages
         ros-${ROS_DISTRO}-realsense2-camera \
         ros-${ROS_DISTRO}-realsense2-description \
         && \
@@ -121,8 +122,10 @@ RUN apt-get update && \
 ############################## devel ##############################
 FROM devel-base AS devel
 
-ARG USER
-ARG GROUP
+ARG USER_NAME="user"
+ARG USER_GROUP="user"
+ARG USER="${USER_NAME}"
+ARG GROUP="${USER_GROUP}"
 ARG ENTRYPOINT_FILE="script/entrypoint.sh"
 ARG CONFIG_DIR="/tmp/config"
 ARG SETUP_DIR="/tmp/setup"
@@ -157,28 +160,36 @@ ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]
 
 ############################## devel-test (ephemeral) ##############################
+# Resolves to test-tools:local (local just build) or
+# ghcr.io/ycpss91255-docker/test-tools:vX.Y.Z (CI); see TEST_TOOLS_IMAGE at top.
+# hadolint ignore=DL3006
+FROM ${TEST_TOOLS_IMAGE} AS test-tools-stage
+
 FROM devel AS devel-test
 
 USER root
 
-# Install lint tools
-COPY --from=lint-tools /usr/local/bin/shellcheck /usr/local/bin/shellcheck
-COPY --from=lint-tools /usr/local/bin/hadolint /usr/local/bin/hadolint
+# Install lint tools (from the pre-built multi-arch test-tools image)
+COPY --from=test-tools-stage /usr/local/bin/shellcheck /usr/local/bin/shellcheck
+COPY --from=test-tools-stage /usr/local/bin/hadolint /usr/local/bin/hadolint
 
 # Lint: ShellCheck (.sh) + Hadolint (Dockerfile)
 COPY .hadolint.yaml /lint/.hadolint.yaml
 COPY Dockerfile /lint/Dockerfile
+# base v0.41.0 moved the wrapper scripts under .base/script/docker/wrapper/,
+# so the old `COPY .base/script/docker/*.sh` glob matched nothing and broke
+# this stage. The repo's own script/*.sh are symlinks to those wrappers, so
+# `COPY script/*.sh /lint/` already dereferences and lints them.
 COPY script/*.sh /lint/
-COPY .base/script/docker/*.sh /lint/
 COPY .base/script/docker/lib /lint/lib
 RUN shellcheck -S warning /lint/*.sh /lint/lib/*.sh
 WORKDIR /lint
 RUN hadolint Dockerfile
 
-# Install bats
-COPY --from=bats-src /opt/bats /opt/bats
-COPY --from=bats-src /usr/lib/bats /usr/lib/bats
-COPY --from=bats-extensions /bats /usr/lib/bats
+# Install bats (the bats-support/assert/mock extensions are already merged
+# into /usr/lib/bats inside the test-tools image)
+COPY --from=test-tools-stage /opt/bats /opt/bats
+COPY --from=test-tools-stage /usr/lib/bats /usr/lib/bats
 RUN ln -sf /opt/bats/bin/bats /usr/local/bin/bats
 
 ENV BATS_LIB_PATH="/usr/lib/bats"
@@ -187,7 +198,12 @@ ENV BATS_LIB_PATH="/usr/lib/bats"
 COPY .base/test/smoke/ /smoke_test/
 COPY test/smoke/ /smoke_test/
 
-ARG USER
+ARG USER_NAME="user"
+ARG USER="${USER_NAME}"
+# Surface the configured user so the smoke test can assert the image was
+# actually built as it (regression guard for the USER_NAME build contract).
+# Ephemeral devel-test stage only -- not shipped in devel/runtime.
+ENV CONTAINER_EXPECTED_USER="${USER_NAME}"
 USER "${USER}"
 
 RUN bats /smoke_test/
@@ -207,15 +223,25 @@ RUN apt-get update && \
 FROM runtime-base AS runtime
 
 ARG ROS_DISTRO
-ARG USER
+ARG USER_NAME="user"
+ARG USER="${USER_NAME}"
 
+# Runtime ROS packages. Also append a ROS source to /etc/bash.bashrc so
+# interactive `docker exec` shells get `ros2`/`roslaunch` on PATH: the entrypoint
+# sources ROS for PID 1 (the launched app) only and `docker exec` bypasses the
+# entrypoint. /etc/bash.bashrc is read by interactive shells only (its leading
+# non-interactive guard short-circuits otherwise), so non-interactive correctness
+# is untouched and -- unlike baking ROS into ENV -- it is not arch-/python-version
+# fragile. devel already does this via its bashrc.d drop-in (base#657, #67).
+# Folded into this RUN (not a separate one) to avoid a consecutive-RUN lint (DL3059).
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ros-${ROS_DISTRO}-realsense2-camera \
         ros-${ROS_DISTRO}-realsense2-description \
         && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    printf 'source /opt/ros/%s/setup.bash\n' "${ROS_DISTRO}" >> /etc/bash.bashrc
 
 # Copy RealSense udev rules
 RUN mkdir -p /etc/udev/rules.d
@@ -233,14 +259,34 @@ CMD ["roslaunch", "realsense2_camera", "rs_camera.launch"]
 
 ############################## runtime-test (ephemeral) ##############################
 # Install-check smoke for the runtime image (template v0.21.1+ #243).
-# Default smoke verifies USER + bash on PATH. Override per-repo via
-# build_args: RUNTIME_SMOKE_CMD=<command> (constraint: CLI-only, no
-# GUI binaries that init Qt / OGRE on --version / --help).
 #
-# `sh -c` wrapper required: bare `RUN ${ARG}` word-splits operators
-# (&&, ||) and nested quotes. The wrapper passes the value as a
-# single string for sh to parse normally.
+# This repo overrides the default smoke (USER + bash) to verify that the
+# realsense2_camera node's shared libraries all resolve in the runtime
+# image -- the exact regression class that went undetected in
+# ros1_bridge#123 (a missing transitive .so the devel-stage bats never
+# exercised, because devel carries the full build deps). ldd every
+# realsense2_camera shared object and fail on any "not found"; the non-empty
+# guard prevents a vacuous pass if the layout ever changes.
+#
+# ROS 1 (catkin) installs the nodelet libs directly under
+# /opt/ros/${ROS_DISTRO}/lib/ as librealsense2_camera.so -- there is NO
+# per-package lib/<pkg>/ subdir (that is the ROS 2 / ament layout). So match
+# the librealsense2*.so* files at the top of lib/, not a realsense2_camera/ dir.
+#
+# `bash -c` (not `sh -c`): the command sources ROS setup.bash and uses a
+# bash for-loop. The inner bash runs without the outer SHELL's
+# -euo pipefail, so `source` under nounset is safe (matches ros1_bridge).
 FROM runtime AS runtime-test
 
-ARG RUNTIME_SMOKE_CMD='whoami && bash --version'
-RUN sh -c "${RUNTIME_SMOKE_CMD}"
+ARG RUNTIME_SMOKE_CMD='whoami && bash --version && \
+  source /opt/ros/${ROS_DISTRO}/setup.bash && \
+  libs="$(find "/opt/ros/${ROS_DISTRO}/lib" -maxdepth 1 -name "librealsense2*.so*")" && \
+  test -n "${libs}" && \
+  for f in ${libs}; do \
+    echo "--- ldd: ${f} ---"; ldd "${f}" || true; \
+    if ldd "${f}" 2>&1 | grep -q "not found"; then \
+      echo "RUNTIME SMOKE FAIL: unresolved shared library in ${f}"; exit 1; \
+    fi; \
+  done && \
+  echo "RUNTIME SMOKE OK: realsense2_camera shared libraries resolved"'
+RUN bash -c "${RUNTIME_SMOKE_CMD}"
