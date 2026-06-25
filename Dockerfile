@@ -265,9 +265,13 @@ CMD ["roslaunch", "realsense2_camera", "rs_camera.launch"]
 # image -- the exact regression class that went undetected in
 # ros1_bridge#123 (a missing transitive .so the devel-stage bats never
 # exercised, because devel carries the full build deps). ldd every
-# installed file under the package lib dir and fail on any "not found";
-# the non-empty guard prevents a vacuous pass if the dir is ever
-# missing/empty.
+# realsense2_camera shared object and fail on any "not found"; the non-empty
+# guard prevents a vacuous pass if the layout ever changes.
+#
+# ROS 1 (catkin) installs the nodelet libs directly under
+# /opt/ros/${ROS_DISTRO}/lib/ as librealsense2_camera.so -- there is NO
+# per-package lib/<pkg>/ subdir (that is the ROS 2 / ament layout). So match
+# the librealsense2*.so* files at the top of lib/, not a realsense2_camera/ dir.
 #
 # `bash -c` (not `sh -c`): the command sources ROS setup.bash and uses a
 # bash for-loop. The inner bash runs without the outer SHELL's
@@ -276,11 +280,9 @@ FROM runtime AS runtime-test
 
 ARG RUNTIME_SMOKE_CMD='whoami && bash --version && \
   source /opt/ros/${ROS_DISTRO}/setup.bash && \
-  rs_dir="/opt/ros/${ROS_DISTRO}/lib/realsense2_camera" && \
-  test -d "${rs_dir}" && \
-  bins="$(find "${rs_dir}" -maxdepth 1 \( -type f -o -type l \))" && \
-  test -n "${bins}" && \
-  for f in ${bins}; do \
+  libs="$(find "/opt/ros/${ROS_DISTRO}/lib" -maxdepth 1 -name "librealsense2*.so*")" && \
+  test -n "${libs}" && \
+  for f in ${libs}; do \
     echo "--- ldd: ${f} ---"; ldd "${f}" || true; \
     if ldd "${f}" 2>&1 | grep -q "not found"; then \
       echo "RUNTIME SMOKE FAIL: unresolved shared library in ${f}"; exit 1; \
