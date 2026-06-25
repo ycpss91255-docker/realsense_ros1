@@ -1,4 +1,4 @@
-name: Main CI/CD Pipeline
+name: CI
 run-name: ${{ github.actor }} triggered CI/CD on ${{ github.ref_name }}
 
 on:
@@ -16,13 +16,41 @@ jobs:
   call-docker-build:
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # ROS 1 ships a single supported distro here: Noetic (Ubuntu 20.04
+          # focal). kinetic is intentionally out of scope (EOL; RealSense on
+          # xenial/arm64 is unverified) -- see README. The matrix keeps the
+          # ros2-parity shape so a future distro is a one-line add and the
+          # `ci-passed` aggregator below stays stable.
+          - { name: noetic, ros_distro: noetic, ros_tag: ros-base, ubuntu_codename: focal }
+    name: build (${{ matrix.target.name }})
     uses: ycpss91255-docker/base/.github/workflows/build-worker.yaml@v0.41.0
     with:
-      image_name: realsense_noetic
+      image_name: realsense_ros1
+      platforms: linux/amd64,linux/arm64
+      test_tools_version: v0.41.0
       build_args: |
-        ROS_DISTRO=noetic
-        ROS_TAG=ros-base
-        UBUNTU_CODENAME=focal
+        ROS_DISTRO=${{ matrix.target.ros_distro }}
+        ROS_TAG=${{ matrix.target.ros_tag }}
+        UBUNTU_CODENAME=${{ matrix.target.ubuntu_codename }}
+
+  # Stable-named aggregator so branch protection's required status check does
+  # not have to enumerate every matrix entry. Branch protection references
+  # `ci-passed`; the build matrix shape can change without re-configuring it.
+  ci-passed:
+    needs: call-docker-build
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() }}
+    steps:
+      - run: |
+          if [ "${{ needs.call-docker-build.result }}" != "success" ]; then
+            echo "One or more matrix builds failed (result=${{ needs.call-docker-build.result }})"
+            exit 1
+          fi
+          echo "All matrix builds passed"
 
   call-release:
     needs: call-docker-build
@@ -31,5 +59,5 @@ jobs:
       contents: write
     uses: ycpss91255-docker/base/.github/workflows/release-worker.yaml@v0.41.0
     with:
-      archive_name_prefix: realsense_noetic
+      archive_name_prefix: realsense_ros1
     secrets: inherit
