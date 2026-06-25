@@ -1,16 +1,17 @@
 # TEST.md
 
-**44 tests** total.
+**49 tests** total.
 
 ## test/smoke/ros_env.bats
 
-### ROS environment (3)
+### ROS environment (4)
 
 | Test | Description |
 |------|-------------|
 | `ROS_DISTRO is set` | ROS_DISTRO environment variable is set |
 | `ROS 1 setup.bash exists` | `/opt/ros/${ROS_DISTRO}/setup.bash` exists |
 | `ROS 1 setup.bash can be sourced` | ROS 1 setup script sources without error |
+| `interactive shells source ROS (roslaunch on PATH via bashrc.d)` | `config/shell/bashrc.d/10-ros-source.sh` puts `roslaunch` on PATH in interactive shells |
 
 ### RealSense packages (2)
 
@@ -45,6 +46,17 @@
 | Test | Description |
 |------|-------------|
 | `Work directory exists` | `${HOME}/work` directory exists |
+
+## test/smoke/install_udev_rules.bats
+
+### install_udev_rules.sh (4)
+
+| Test | Description |
+|------|-------------|
+| `install_udev_rules.sh -h exits 0` | Help flag exits successfully |
+| `install_udev_rules.sh --help exits 0` | Long help flag exits successfully |
+| `install_udev_rules.sh -h prints usage` | Help output contains "Usage:" |
+| `install_udev_rules.sh is executable` | Script carries the executable bit (regression: shipped 0644 once) |
 
 ## template/test/smoke/script_help.bats
 

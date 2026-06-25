@@ -19,6 +19,18 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   IMU -- needs privileged-level access; a `privileged = false` config was tested
   end-to-end on a D455 and rejected as fragile). ROS 1 sibling of the
   realsense_ros2 ADR (#64).
+- `script/install_udev_rules.sh`: host-side one-shot installer that copies the
+  bundled RealSense udev rules to `/etc/udev/rules.d/` and reloads udev. The
+  in-image rules alone are not enough (the container has no `udevd`); without
+  the host rules the non-root container user cannot open the raw USB node and
+  the SDK misdetects the camera. Ships executable (0755); guarded by a new
+  `test/smoke/install_udev_rules.bats` (incl. an `is executable` regression
+  test). ROS 1 parity with realsense_ros2 (#69).
+- `config/shell/bashrc.d/10-ros-source.sh`: source ROS 1 for interactive shells
+  so `roslaunch` / `roscore` / `realsense-viewer` are on PATH in `just run` /
+  `just exec` shells (the base bashrc is ROS-agnostic). Guarded by a new
+  `ros_env.bats` test. nounset-safe (ROS 1 `setup.bash` reads `$ROS_MASTER_URI`)
+  (#61, base#657).
 
 ### Changed
 - `config/docker/setup.conf`: remove the dead `cap_add`
