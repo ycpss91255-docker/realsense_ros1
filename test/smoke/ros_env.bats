@@ -42,6 +42,16 @@ setup() {
     assert_success
 }
 
+# -------------------- Desktop GUI (devel) --------------------
+
+@test "rqt_image_view is available (devel GUI; backs the README demo)" {
+    # devel-base installs ros-${ROS_DISTRO}-desktop, which ships rqt_image_view.
+    # The README RGB-D demo tells users to `rosrun rqt_image_view rqt_image_view`
+    # from the devel image, so guard that the package is actually present.
+    run dpkg -l ros-${ROS_DISTRO}-rqt-image-view
+    assert_success
+}
+
 # -------------------- Base tools --------------------
 
 @test "git is available" {

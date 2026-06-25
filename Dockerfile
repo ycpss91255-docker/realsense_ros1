@@ -112,6 +112,10 @@ RUN apt-get update && \
         # ROS 1 tools
         bash-completion \
         python3-catkin-tools \
+        # ROS 1 desktop (devel only): rviz + rqt (incl. rqt_image_view, used by
+        # the README RGB-D demo) + the Qt/OpenGL/X stack GUI tools need. The
+        # runtime image stays on ros-base (this is in devel-base, not runtime).
+        ros-${ROS_DISTRO}-desktop \
         # RealSense packages
         ros-${ROS_DISTRO}-realsense2-camera \
         ros-${ROS_DISTRO}-realsense2-description \
