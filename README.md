@@ -25,6 +25,7 @@ just build && just run -t runtime    # build + launch the camera app
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [Usage](#usage)
+- [Multi-machine](#multi-machine-ros-1)
 - [Uninstall / Cleanup](#uninstall--cleanup)
 - [Configuration](#configuration)
 - [Architecture](#architecture)
@@ -199,6 +200,50 @@ just build test
 # or
 docker compose --profile test build test
 ```
+
+## Multi-machine (ROS 1)
+
+ROS 1 uses a central master (`roscore`). To consume the camera from another
+machine, run the master on one host, point every node at it, and make each node
+advertise a routable address. These are per-deployment runtime values, so they
+go in **`.env`** (the hand-authored workload overlay -- injected into the
+container via `env_file: - .env`, applied by `just run` alone, never
+regenerated, git-ignored). Machine-baked / build params (GPU, privileged,
+mounts) stay in `config/docker/setup.conf`.
+
+This repo already ships `[network] mode = host`, so the master port (`11311`)
+and each node's dynamic TCPROS ports live on the host's real LAN IP -- reachable
+from other machines.
+
+**On the camera machine (slave -- e.g. a Raspberry Pi):** add to `.env`
+
+```ini
+ROS_MASTER_URI=http://<master-ip>:11311   # the host running roscore
+ROS_IP=<this-machine-ip>                   # this machine's LAN IP (see note)
+```
+
+then launch with no extra flags -- compose injects `.env`:
+
+```bash
+just run -t runtime
+```
+
+**On the master machine:** run the master and subscribe (any ROS 1 environment,
+e.g. the `ros_distro` env):
+
+```bash
+export ROS_IP=<master-ip>
+roscore &
+rostopic hz /camera/color/image_raw      # data arriving from the camera machine
+```
+
+> **Set `ROS_IP`.** Without it a node advertises its *hostname* to the master; a
+> remote subscriber that cannot resolve that name sees the topic in `rostopic
+> list` but receives no data (the classic "list works, echo hangs" symptom).
+> Setting `ROS_IP` to the machine's LAN IP makes it advertise a routable address.
+
+Verified on a Raspberry Pi 5 (camera/slave) talking to a host master over a
+direct link: `/camera/color/image_raw` arrived at ~28 Hz on the master.
 
 ## Uninstall / Cleanup
 

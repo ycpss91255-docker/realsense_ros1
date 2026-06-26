@@ -62,6 +62,12 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   READMEs (#70). Adapted from realsense_ros2; CALIBRATION.md notes the tool is
   **not yet bundled** in the focal-based ROS 1 `devel` image (the donor bundles
   the amd64 `pool/jammy` `.deb`; a focal build is deferred to a follow-up).
+- README **Multi-machine (ROS 1)** section (all 4 languages): run a master on
+  one host and the camera container as a slave by putting `ROS_MASTER_URI` +
+  `ROS_IP` in the `.env` workload overlay -- no command-line flags, since
+  `compose.yaml` injects `.env` via `env_file`. Documents the `ROS_IP`
+  hostname-advertisement gotcha. Verified Pi-as-slave -> host master (~28 Hz on
+  the master).
 
 ### Changed
 - `config/docker/setup.conf`: remove the dead `cap_add`
