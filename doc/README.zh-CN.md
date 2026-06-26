@@ -25,6 +25,7 @@ just build && just run -t runtime    # build + 启动相机 app
 - [前置条件](#prerequisites)
 - [快速开始](#快速开始)
 - [使用方式](#使用方式)
+- [多机连接](#multi-machine-ros-1)
 - [卸载 / 清理](#uninstall--cleanup)
 - [配置](#配置)
 - [架构](#架构)
@@ -187,6 +188,48 @@ just build test
 # 或
 docker compose --profile test build test
 ```
+
+## Multi-machine (ROS 1)
+
+ROS 1 使用中央 master（`roscore`）。要从另一台机器使用相机，请在其中一台 host
+上运行 master，让每个节点都指向它，并让每个节点对外通告一个可路由的地址。这些是
+每次部署的 runtime 值，所以放在 **`.env`**（手动编写的 workload overlay -- 通过
+`env_file: - .env` 注入容器，由 `just run` 单独应用，永远不会被重新生成，且已被
+git 忽略）。machine-baked / build 参数（GPU、privileged、挂载）则留在
+`config/docker/setup.conf`。
+
+本 repo 已内置 `[network] mode = host`，因此 master port（`11311`）与每个节点的
+动态 TCPROS port 都落在 host 真正的 LAN IP 上 -- 其他机器可以连到。
+
+**在相机机器上（slave -- 例如 Raspberry Pi）：** 在 `.env` 加入
+
+```ini
+ROS_MASTER_URI=http://<master-ip>:11311   # the host running roscore
+ROS_IP=<this-machine-ip>                   # this machine's LAN IP (see note)
+```
+
+然后不带任何额外标志启动 -- compose 会注入 `.env`：
+
+```bash
+just run -t runtime
+```
+
+**在 master 机器上：** 运行 master 并订阅（任何 ROS 1 环境皆可，例如 `ros_distro`
+环境）：
+
+```bash
+export ROS_IP=<master-ip>
+roscore &
+rostopic hz /camera/color/image_raw      # data arriving from the camera machine
+```
+
+> **务必设置 `ROS_IP`。** 没有它的话，节点会把自己的*主机名*通告给 master；无法
+> 解析该名称的远端订阅者虽然在 `rostopic list` 看得到 topic，却收不到任何数据
+> （典型的「list 有、echo 卡住」症状）。把 `ROS_IP` 设为该机器的 LAN IP，就会通告
+> 一个可路由的地址。
+
+已在 Raspberry Pi 5（相机/slave）通过直连连到 host master 上实测：
+`/camera/color/image_raw` 在 master 上以 ~28 Hz 抵达。
 
 ## Uninstall / Cleanup
 

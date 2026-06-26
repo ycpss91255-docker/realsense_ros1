@@ -25,6 +25,7 @@ just build && just run -t runtime    # build + launch the camera app
 - [前提条件](#prerequisites)
 - [クイックスタート](#クイックスタート)
 - [使い方](#使い方)
+- [マルチマシン](#multi-machine-ros-1)
 - [アンインストール / クリーンアップ](#uninstall--cleanup)
 - [設定](#設定)
 - [アーキテクチャ](#アーキテクチャ)
@@ -193,6 +194,51 @@ just build test
 # または
 docker compose --profile test build test
 ```
+
+## Multi-machine (ROS 1)
+
+ROS 1 は中央 master（`roscore`）を使います。別のマシンからカメラを利用するには、
+いずれか 1 台の host で master を実行し、すべてのノードをそれに向け、各ノードが
+ルーティング可能なアドレスを通告するようにします。これらはデプロイごとの runtime
+値なので、**`.env`**（手書きの workload overlay -- `env_file: - .env` でコンテナに
+注入され、`just run` 単独で適用され、再生成されることはなく、git で無視される）に
+記述します。machine-baked / build パラメータ（GPU、privileged、マウント）は
+`config/docker/setup.conf` に残します。
+
+このリポジトリはすでに `[network] mode = host` を同梱しているため、master の
+port（`11311`）と各ノードの動的 TCPROS port は host の実際の LAN IP 上にあり、
+他のマシンから到達できます。
+
+**カメラ側マシン（slave -- 例: Raspberry Pi）：** `.env` に以下を追加します
+
+```ini
+ROS_MASTER_URI=http://<master-ip>:11311   # the host running roscore
+ROS_IP=<this-machine-ip>                   # this machine's LAN IP (see note)
+```
+
+その後、追加フラグなしで起動します -- compose が `.env` を注入します：
+
+```bash
+just run -t runtime
+```
+
+**master 側マシン：** master を実行して購読します（任意の ROS 1 環境、例えば
+`ros_distro` 環境）：
+
+```bash
+export ROS_IP=<master-ip>
+roscore &
+rostopic hz /camera/color/image_raw      # data arriving from the camera machine
+```
+
+> **`ROS_IP` を必ず設定してください。** これがないと、ノードは自身の*ホスト名*を
+> master に通告します。その名前を解決できないリモートの購読者は、`rostopic list`
+> ではトピックを見られても、データは一切受信できません（典型的な「list は出るが
+> echo がハングする」症状）。`ROS_IP` をそのマシンの LAN IP に設定すると、
+> ルーティング可能なアドレスを通告するようになります。
+
+Raspberry Pi 5（カメラ/slave）から直結リンク経由で host master に接続して実測：
+`/camera/color/image_raw` が master 側に ~28 Hz で届きました。
 
 ## Uninstall / Cleanup
 
