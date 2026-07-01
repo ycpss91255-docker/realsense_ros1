@@ -7,7 +7,33 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Multi-machine slave self-heals when a **remote** master restarts after launch
+  (#81): building on the #79/#80 boot gate, `script/entrypoint.sh` now runs a
+  supervisor loop when `ROS_MASTER_URI` is remote. It launches `roslaunch
+  --wait` as a child, and every `ROS_MASTER_CHECK_INTERVAL` (default 15 s)
+  checks whether `ROS_SUPERVISE_NODE` (default `/camera/realsense2_camera`) is
+  registered on the *current* master (`timeout ROS_MASTER_CHECK_TIMEOUT rosnode
+  list`, default 5 s) -- registration, not mere master reachability, since a
+  master restarted on the same port stays TCP-reachable while the node is
+  already deregistered. After `ROS_MASTER_CHECK_FAILURES` consecutive failures
+  (default 3, ~45 s) it kills roslaunch cleanly and relaunches, so the fresh
+  `--wait` re-waits and re-registers on the new master. A transient blip shorter
+  than the failure window does not trigger a restart. `SIGTERM`/`SIGINT` are
+  forwarded to the child and reaped before exit so `just stop` stays clean and
+  fast (no 10 s SIGKILL wait). Enabled by default for a remote master;
+  `ROS_MASTER_SUPERVISE=0` falls back to the plain `--wait` gate. All knobs are
+  `.env`-configurable; local/unset master and non-`roslaunch` commands are
+  unchanged. The enable-decision and the registration check are factored into
+  pure functions, guarded by 6 new `ros_env.bats` tests. Interim reaping `wait`s
+  on the direct roslaunch child only; grandchildren orphaned by a hard kill need
+  a PID 1 init, deferred to the base `init` toggle.
+
 ### Removed
+- Unused `tini` from the Dockerfile `runtime-base` stage (#81): it was installed
+  but never wired as `ENTRYPOINT` (the entrypoint is `script/entrypoint.sh`), so
+  it was dead weight. Proper PID 1 zombie reaping belongs to a base-generated
+  `init` toggle, not an app-level hand-edit. `sudo` is kept.
 - Legacy `.env.example`. base v0.41.0's `detect_image_name` resolves
   `IMAGE_NAME` from `config/docker/setup.conf` `[image]` rules (here the
   `@basename` fallback -> `realsense_ros1`), so the committed `.env.example`

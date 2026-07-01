@@ -70,6 +70,59 @@ setup() {
     assert_output "roslaunch --wait pkg foo.launch"
 }
 
+# -------------------- Entrypoint: remote-master supervision --------------------
+#
+# On top of the boot gate (#79/#80), when the master is remote the entrypoint
+# supervises node registration: it (re)launches `roslaunch --wait` and restarts
+# it if our node stays deregistered (a remote master restarted on the same port
+# stays TCP-reachable but leaves roslaunch alive and unregistered). The
+# enable-decision and the registration check are factored into pure functions so
+# these tests never start the real while-loop (which is guarded to the real
+# entrypoint invocation and hardware-verified separately).
+
+@test "supervision enabled for a remote master + roslaunch (default on) (#81)" {
+    run bash -c 'export ROS_MASTER_URI=http://192.168.1.5:11311; unset ROS_MASTER_SUPERVISE; source /entrypoint.sh; _supervision_enabled roslaunch pkg foo.launch'
+    assert_success
+}
+
+@test "supervision disabled when ROS_MASTER_SUPERVISE=0 (#81)" {
+    run bash -c 'export ROS_MASTER_URI=http://192.168.1.5:11311 ROS_MASTER_SUPERVISE=0; source /entrypoint.sh; _supervision_enabled roslaunch pkg foo.launch'
+    assert_failure
+}
+
+@test "supervision disabled for a local master (#81)" {
+    run bash -c 'export ROS_MASTER_URI=http://localhost:11311; source /entrypoint.sh; _supervision_enabled roslaunch pkg foo.launch'
+    assert_failure
+}
+
+@test "supervision disabled for a non-roslaunch command (#81)" {
+    run bash -c 'export ROS_MASTER_URI=http://192.168.1.5:11311; source /entrypoint.sh; _supervision_enabled bash -c "echo hi"'
+    assert_failure
+}
+
+@test "supervised node present in rosnode list is healthy (#81)" {
+    run bash -c 'source /entrypoint.sh; _node_registered /camera/realsense2_camera "$(printf "%s\n" /rosout /camera/realsense2_camera)"'
+    assert_success
+}
+
+@test "supervised node absent from rosnode list is unhealthy (#81)" {
+    run bash -c 'source /entrypoint.sh; _node_registered /camera/realsense2_camera "$(printf "%s\n" /rosout /other_node)"'
+    assert_failure
+}
+
+@test "supervisor stops the roslaunch child with SIGTERM, not SIGINT (#81)" {
+    # The roslaunch child is started async (`roslaunch ... &`), so a
+    # non-interactive shell sets its SIGINT/SIGQUIT to SIG_IGN (POSIX). `kill
+    # -INT` on it would be ignored and the following `wait` would hang forever
+    # (verified: restart-on-orphan and clean shutdown both stall). The
+    # supervisor must signal the child with SIGTERM, which is not ignored and
+    # which roslaunch handles with a clean node shutdown.
+    run grep -F 'kill -INT' /entrypoint.sh
+    assert_failure
+    run grep -F 'kill -TERM "${_SUPERVISE_CHILD_PID}"' /entrypoint.sh
+    assert_success
+}
+
 # -------------------- RealSense packages --------------------
 
 @test "realsense2_camera is installed" {
