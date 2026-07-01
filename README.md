@@ -228,6 +228,13 @@ then launch with no extra flags -- compose injects `.env`:
 just run -t runtime
 ```
 
+When `.env` sets a remote `ROS_MASTER_URI`, the slave waits for the master
+automatically: the entrypoint launches with `roslaunch --wait`, which blocks
+until the master is reachable, then launches. Boot order no longer matters --
+the slave may start before the master (e.g. auto-started on boot) and still
+registers cleanly once the master appears, instead of coming up as an
+unregistered zombie node.
+
 **On the master machine:** run the master and subscribe (any ROS 1 environment,
 e.g. the `ros_distro` env):
 

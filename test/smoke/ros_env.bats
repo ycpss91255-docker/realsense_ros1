@@ -30,6 +30,46 @@ setup() {
     assert_output --partial "/opt/ros/${ROS_DISTRO}/bin/roslaunch"
 }
 
+# -------------------- Entrypoint: remote-master wait --------------------
+#
+# entrypoint.sh resolves the final argv into RESOLVED_ARGV without executing,
+# so the decision is unit-testable without a live master. When ROS_MASTER_URI
+# points at a remote master AND the command is roslaunch, it injects
+# `roslaunch --wait` (blocks until the master is reachable, then launches),
+# fixing the multi-machine slave boot race (#79). Sourcing the entrypoint runs
+# only the pure functions; the ROS-source + exec are guarded to the real
+# entrypoint invocation, so these tests can source it safely.
+
+@test "entrypoint injects --wait for a remote master + roslaunch (#79)" {
+    run bash -c 'export ROS_MASTER_URI=http://192.168.1.5:11311; source /entrypoint.sh; _resolve_argv roslaunch pkg foo.launch; echo "${RESOLVED_ARGV[@]}"'
+    assert_success
+    assert_output "roslaunch --wait pkg foo.launch"
+}
+
+@test "entrypoint does not inject --wait for a local master (#79)" {
+    run bash -c 'export ROS_MASTER_URI=http://localhost:11311; source /entrypoint.sh; _resolve_argv roslaunch pkg foo.launch; echo "${RESOLVED_ARGV[@]}"'
+    assert_success
+    assert_output "roslaunch pkg foo.launch"
+}
+
+@test "entrypoint does not inject --wait when ROS_MASTER_URI is unset (#79)" {
+    run bash -c 'unset ROS_MASTER_URI; source /entrypoint.sh; _resolve_argv roslaunch pkg foo.launch; echo "${RESOLVED_ARGV[@]}"'
+    assert_success
+    assert_output "roslaunch pkg foo.launch"
+}
+
+@test "entrypoint passes non-roslaunch commands through unchanged (#79)" {
+    run bash -c 'export ROS_MASTER_URI=http://192.168.1.5:11311; source /entrypoint.sh; _resolve_argv bash -c "echo hi"; echo "${RESOLVED_ARGV[@]}"'
+    assert_success
+    assert_output "bash -c echo hi"
+}
+
+@test "entrypoint does not double-inject --wait when already present (#79)" {
+    run bash -c 'export ROS_MASTER_URI=http://192.168.1.5:11311; source /entrypoint.sh; _resolve_argv roslaunch --wait pkg foo.launch; echo "${RESOLVED_ARGV[@]}"'
+    assert_success
+    assert_output "roslaunch --wait pkg foo.launch"
+}
+
 # -------------------- RealSense packages --------------------
 
 @test "realsense2_camera is installed" {

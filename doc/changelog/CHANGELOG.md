@@ -83,6 +83,18 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   align before the v1.0.0 removal) (#58).
 
 ### Fixed
+- Multi-machine slave boot race (#79): when `.env` points `ROS_MASTER_URI` at a
+  **remote** master, `script/entrypoint.sh` now launches with `roslaunch
+  --wait`, which blocks until the master is reachable and then launches. A slave
+  that boots before its master (e.g. `restart: unless-stopped` auto-start) no
+  longer comes up as an unregistered zombie node (`rostopic list` showed the
+  topics but `rosnode list` never showed `/camera`). Guarded to avoid breaking
+  the single-machine default: `--wait` is injected only for a remote master
+  (not empty / `localhost` / `127.*` / `::1`, where roslaunch starts its own
+  roscore and `--wait` would deadlock) **and** only when the command is
+  `roslaunch`; other commands (e.g. an interactive `just exec` shell) pass
+  through unchanged, and `--wait` is never double-injected. Guarded by 5 new
+  `ros_env.bats` regression tests.
 - README (4 languages) re-synced to the actual code (#63): commands now use
   `just` recipes instead of the removed `./build.sh` / `./run.sh`; removed the
   duplicate CI badge; corrected the install claim (only

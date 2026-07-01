@@ -222,6 +222,12 @@ ROS_IP=<this-machine-ip>                   # this machine's LAN IP (see note)
 just run -t runtime
 ```
 
+`.env` にリモートの `ROS_MASTER_URI` が設定されている場合、slave は master を
+自動的に待ちます。entrypoint は `roslaunch --wait` で起動し、master に到達できる
+ようになるまでブロックしてから起動します。起動順序はもう問題になりません --
+slave は master より先に起動しても（例: 起動時に自動起動）、master が現れた時点で
+きれいに登録され、未登録のゾンビノードになることはありません。
+
 **master 側マシン：** master を実行して購読します（任意の ROS 1 環境、例えば
 `ros_distro` 環境）：
 
