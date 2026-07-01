@@ -1,6 +1,6 @@
 # TEST.md
 
-**61 tests** total.
+**66 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -12,6 +12,16 @@
 | `ROS 1 setup.bash exists` | `/opt/ros/${ROS_DISTRO}/setup.bash` exists |
 | `ROS 1 setup.bash can be sourced` | ROS 1 setup script sources without error |
 | `interactive shells source ROS (roslaunch on PATH via bashrc.d)` | `config/shell/bashrc.d/10-ros-source.sh` puts `roslaunch` on PATH for interactive shells |
+
+### Entrypoint: remote-master wait (5)
+
+| Test | Description |
+|------|-------------|
+| `entrypoint injects --wait for a remote master + roslaunch (#79)` | Remote `ROS_MASTER_URI` + `roslaunch` resolves to `roslaunch --wait ...` |
+| `entrypoint does not inject --wait for a local master (#79)` | `localhost` master leaves `roslaunch` args unchanged (no deadlock) |
+| `entrypoint does not inject --wait when ROS_MASTER_URI is unset (#79)` | Unset/empty master leaves `roslaunch` args unchanged |
+| `entrypoint passes non-roslaunch commands through unchanged (#79)` | Non-`roslaunch` command (e.g. `bash -c ...`) is not modified |
+| `entrypoint does not double-inject --wait when already present (#79)` | Existing `--wait` is not duplicated |
 
 ### RealSense packages (2)
 

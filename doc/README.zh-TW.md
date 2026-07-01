@@ -214,6 +214,11 @@ ROS_IP=<this-machine-ip>                   # this machine's LAN IP (see note)
 just run -t runtime
 ```
 
+當 `.env` 設定了遠端的 `ROS_MASTER_URI` 時，slave 會自動等待 master：entrypoint
+會以 `roslaunch --wait` 啟動，先阻塞直到 master 可連線，再開始啟動。啟動順序不再
+重要 -- slave 可以早於 master 啟動（例如開機時自動啟動），仍會在 master 出現後乾淨
+地註冊，而不會變成一個未註冊的殭屍節點。
+
 **在 master 機器上：** 跑 master 並訂閱（任何 ROS 1 環境皆可，例如 `ros_distro`
 環境）：
 
