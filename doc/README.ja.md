@@ -228,6 +228,27 @@ just run -t runtime
 slave は master より先に起動しても（例: 起動時に自動起動）、master が現れた時点で
 きれいに登録され、未登録のゾンビノードになることはありません。
 
+リモートの `ROS_MASTER_URI` を持つ slave は、**master が起動後に再起動しても
+自己修復します**。同じポートで再起動した master は TCP 到達可能なままなので、
+roslaunch とノードは動き続けたまま静かに登録解除されます（`rostopic list` には
+名前が残るが `rosnode list` から `/camera` が消える）-- これは
+`restart: unless-stopped` では捕捉できません。entrypoint は*現在の* master 上の
+ノード登録を監視し、デバウンス窓の後に `roslaunch --wait` を再起動して新しい
+master へ再登録させます。調整ノブ（`.env` に記載、いずれも任意）とデフォルト値：
+
+```ini
+ROS_MASTER_SUPERVISE=1                        # 0 で無効化（素の --wait ゲートに戻る）
+ROS_MASTER_CHECK_INTERVAL=15                  # チェック間隔（秒）
+ROS_MASTER_CHECK_TIMEOUT=5                    # rosnode list クエリごとのタイムアウト（秒）
+ROS_MASTER_CHECK_FAILURES=3                   # 再起動までの連続失敗回数（~45 秒）
+ROS_SUPERVISE_NODE=/camera/realsense2_camera  # ヘルスシグナルとなるノード
+```
+
+デフォルトはブリップ耐性重視です（master 再起動は数分のダウンなので、1-2 秒の
+ネットワークブリップで再起動してはならない）。`just stop` は監視をきれいかつ
+高速に停止します。監視はリモート master で `roslaunch` を起動する場合のみ有効で、
+ローカル／未設定の master やその他のコマンドは変更されません。
+
 **master 側マシン：** master を実行して購読します（任意の ROS 1 環境、例えば
 `ros_distro` 環境）：
 
@@ -334,7 +355,7 @@ graph TD
 | `devel-base` | `sys` | 開発ツール + ROS 1 Noetic + RealSense パッケージ |
 | `devel` | `devel-base` | 出荷する開発イメージ（デフォルト CMD `bash`） |
 | `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests、ビルド後に破棄（一時的） |
-| `runtime-base` | `sys` | 最小ベース（`sudo`、`tini`） |
+| `runtime-base` | `sys` | 最小ベース（`sudo`） |
 | `runtime` | `runtime-base` | 出荷するランタイムイメージ：RealSense パッケージ + udev ルール（デフォルト CMD `roslaunch realsense2_camera rs_camera.launch`） |
 | `runtime-test` | `runtime` | runtime smoke、ビルド後に破棄（一時的） |
 

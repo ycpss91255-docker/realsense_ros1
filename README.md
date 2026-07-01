@@ -235,6 +235,29 @@ the slave may start before the master (e.g. auto-started on boot) and still
 registers cleanly once the master appears, instead of coming up as an
 unregistered zombie node.
 
+A slave with a remote `ROS_MASTER_URI` also **self-heals if the master restarts
+after launch**. A master rebooted on the same port stays TCP-reachable, so
+roslaunch and the node keep running but silently deregister (`rostopic list`
+still shows the names, `rosnode list` drops `/camera`) -- which
+`restart: unless-stopped` cannot catch. The entrypoint supervises node
+registration on the *current* master and, after a debounce window,
+relaunches `roslaunch --wait` so the node re-registers on the new master. The
+knobs (put them in `.env`, all optional) with defaults:
+
+```ini
+ROS_MASTER_SUPERVISE=1                        # 0 disables (plain --wait gate)
+ROS_MASTER_CHECK_INTERVAL=15                  # seconds between checks
+ROS_MASTER_CHECK_TIMEOUT=5                    # per-query rosnode-list timeout, seconds
+ROS_MASTER_CHECK_FAILURES=3                   # consecutive failures before restart (~45 s)
+ROS_SUPERVISE_NODE=/camera/realsense2_camera  # node whose registration is the health signal
+```
+
+The defaults are biased toward blip-immunity (a master reboot is minutes of
+downtime, so a 1-2 s network blip must not trigger a restart). `just stop`
+shuts the supervisor down cleanly and fast. Supervision engages only for a
+remote master launching `roslaunch`; local/unset master and other commands are
+unchanged.
+
 **On the master machine:** run the master and subscribe (any ROS 1 environment,
 e.g. the `ros_distro` env):
 
@@ -341,7 +364,7 @@ graph TD
 | `devel-base` | `sys` | Dev tools + ROS 1 Noetic + RealSense packages |
 | `devel` | `devel-base` | Shipped dev image (default CMD `bash`) |
 | `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests, discarded after build (ephemeral) |
-| `runtime-base` | `sys` | Minimal base (`sudo`, `tini`) |
+| `runtime-base` | `sys` | Minimal base (`sudo`) |
 | `runtime` | `runtime-base` | Shipped runtime image: RealSense packages + udev rules (default CMD `roslaunch realsense2_camera rs_camera.launch`) |
 | `runtime-test` | `runtime` | runtime smoke, discarded after build (ephemeral) |
 

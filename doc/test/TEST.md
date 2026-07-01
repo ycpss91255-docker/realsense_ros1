@@ -1,6 +1,6 @@
 # TEST.md
 
-**66 tests** total.
+**72 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -22,6 +22,17 @@
 | `entrypoint does not inject --wait when ROS_MASTER_URI is unset (#79)` | Unset/empty master leaves `roslaunch` args unchanged |
 | `entrypoint passes non-roslaunch commands through unchanged (#79)` | Non-`roslaunch` command (e.g. `bash -c ...`) is not modified |
 | `entrypoint does not double-inject --wait when already present (#79)` | Existing `--wait` is not duplicated |
+
+### Entrypoint: remote-master supervision (6)
+
+| Test | Description |
+|------|-------------|
+| `supervision enabled for a remote master + roslaunch (default on) (#81)` | Remote master + `roslaunch` + default `ROS_MASTER_SUPERVISE` engages the supervisor |
+| `supervision disabled when ROS_MASTER_SUPERVISE=0 (#81)` | `ROS_MASTER_SUPERVISE=0` falls back to the plain gate |
+| `supervision disabled for a local master (#81)` | `localhost` master does not engage the supervisor |
+| `supervision disabled for a non-roslaunch command (#81)` | Non-`roslaunch` command does not engage the supervisor |
+| `supervised node present in rosnode list is healthy (#81)` | `_node_registered` returns healthy when the node is in the list text |
+| `supervised node absent from rosnode list is unhealthy (#81)` | `_node_registered` returns unhealthy when the node is absent |
 
 ### RealSense packages (2)
 

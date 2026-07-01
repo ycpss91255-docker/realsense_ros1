@@ -219,6 +219,25 @@ just run -t runtime
 重要 -- slave 可以早于 master 启动（例如开机时自动启动），仍会在 master 出现后干净
 地注册，而不会变成一个未注册的僵尸节点。
 
+设置了远端 `ROS_MASTER_URI` 的 slave 在 **master 于启动后重启时也会自我修复**。
+master 在同一个端口上重启后仍可通过 TCP 连接，因此 roslaunch 与节点会继续运行却
+悄悄地取消注册（`rostopic list` 仍看得到名称，`rosnode list` 却少了 `/camera`）--
+这是 `restart: unless-stopped` 抓不到的情况。entrypoint 会监看节点在*当前* master
+上的注册状态，并在一段防抖动窗口后重新启动 `roslaunch --wait`，让节点重新注册到新
+的 master。可调参数（放进 `.env`，皆为可选）与默认值：
+
+```ini
+ROS_MASTER_SUPERVISE=1                        # 0 停用（退回单纯的 --wait gate）
+ROS_MASTER_CHECK_INTERVAL=15                  # 每次检查间隔（秒）
+ROS_MASTER_CHECK_TIMEOUT=5                    # 每次 rosnode list 查询超时（秒）
+ROS_MASTER_CHECK_FAILURES=3                   # 重启前的连续失败次数（~45 秒）
+ROS_SUPERVISE_NODE=/camera/realsense2_camera  # 作为健康信号的节点
+```
+
+默认值偏向抗闪断（master 重启通常是数分钟的停机，因此 1-2 秒的网络闪断不应触发
+重启）。`just stop` 会干净且快速地关闭监督程序。监督只对远端 master 且启动
+`roslaunch` 时生效；本机／未设置的 master 与其他命令维持不变。
+
 **在 master 机器上：** 运行 master 并订阅（任何 ROS 1 环境皆可，例如 `ros_distro`
 环境）：
 
@@ -320,7 +339,7 @@ graph TD
 | `devel-base` | `sys` | 开发工具 + ROS 1 Noetic + RealSense 软件包 |
 | `devel` | `devel-base` | 出货的开发镜像（默认 CMD `bash`） |
 | `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests，构建后丢弃（临时性） |
-| `runtime-base` | `sys` | 精简基础（`sudo`、`tini`） |
+| `runtime-base` | `sys` | 精简基础（`sudo`） |
 | `runtime` | `runtime-base` | 出货的运行时镜像：RealSense 软件包 + udev 规则（默认 CMD `roslaunch realsense2_camera rs_camera.launch`） |
 | `runtime-test` | `runtime` | runtime smoke，构建后丢弃（临时性） |
 
