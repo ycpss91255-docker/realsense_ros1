@@ -8,26 +8,28 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
-- Multi-machine slave self-heals when a **remote** master restarts after launch
-  (#81): building on the #79/#80 boot gate, `script/entrypoint.sh` now runs a
-  supervisor loop when `ROS_MASTER_URI` is remote. It launches `roslaunch
-  --wait` as a child, and every `ROS_MASTER_CHECK_INTERVAL` (default 15 s)
-  checks whether `ROS_SUPERVISE_NODE` (default `/camera/realsense2_camera`) is
-  registered on the *current* master (`timeout ROS_MASTER_CHECK_TIMEOUT rosnode
-  list`, default 5 s) -- registration, not mere master reachability, since a
-  master restarted on the same port stays TCP-reachable while the node is
-  already deregistered. After `ROS_MASTER_CHECK_FAILURES` consecutive failures
-  (default 3, ~45 s) it kills roslaunch cleanly and relaunches, so the fresh
-  `--wait` re-waits and re-registers on the new master. A transient blip shorter
-  than the failure window does not trigger a restart. `SIGTERM`/`SIGINT` are
-  forwarded to the child and reaped before exit so `just stop` stays clean and
-  fast (no 10 s SIGKILL wait). Enabled by default for a remote master;
-  `ROS_MASTER_SUPERVISE=0` falls back to the plain `--wait` gate. All knobs are
-  `.env`-configurable; local/unset master and non-`roslaunch` commands are
-  unchanged. The enable-decision and the registration check are factored into
-  pure functions, guarded by 6 new `ros_env.bats` tests. Interim reaping `wait`s
-  on the direct roslaunch child only; grandchildren orphaned by a hard kill need
-  a PID 1 init, deferred to the base `init` toggle.
+- Multi-machine slave can self-heal when a **remote** master restarts after
+  launch (#81), via an opt-in watchdog. Building on the #79/#80 boot gate,
+  `script/entrypoint.sh` runs a supervised-restart loop when the watchdog is
+  enabled and `ROS_MASTER_URI` is remote. It launches `roslaunch --wait` as a
+  child, and every `WATCHDOG_INTERVAL` (default 15 s) checks whether
+  `WATCHDOG_ROSNODE` (default `/camera/realsense2_camera`) is registered on the
+  *current* master (`timeout WATCHDOG_TIMEOUT rosnode list`, default 5 s) --
+  registration, not mere master reachability, since a master restarted on the
+  same port stays TCP-reachable while the node is already deregistered. After
+  `WATCHDOG_FAILURES` consecutive failures (default 3, ~45 s) it kills roslaunch
+  cleanly and relaunches, so the fresh `--wait` re-waits and re-registers on the
+  new master. A transient blip shorter than the failure window does not trigger
+  a restart. `SIGTERM`/`SIGINT` are forwarded to the child and reaped before
+  exit so `just stop` stays clean and fast (no 10 s SIGKILL wait). The watchdog
+  is **opt-in (default off)**, consistent with base `[lifecycle] restart = no`:
+  enable it with `WATCHDOG_ENABLED=1`. The `--wait` gate still applies for a
+  remote master whether or not the watchdog is enabled; local/unset master and
+  non-`roslaunch` commands are unchanged. All knobs are `.env`-configurable. The
+  enable-decision and the registration check are factored into pure functions,
+  guarded by 8 `ros_env.bats` tests. Interim reaping `wait`s on the direct
+  roslaunch child only; grandchildren orphaned by a hard kill need a PID 1 init,
+  deferred to the base `init` toggle.
 
 ### Removed
 - Unused `tini` from the Dockerfile `runtime-base` stage (#81): it was installed
