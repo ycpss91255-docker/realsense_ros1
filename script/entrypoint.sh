@@ -86,10 +86,16 @@ _SUPERVISE_CHILD_PID=""
 
 # On SIGTERM/SIGINT, forward the signal to the roslaunch child, reap it, then
 # exit 0 so `just stop` is clean and fast (no 10s SIGKILL fallback).
+#
+# Use SIGTERM (not SIGINT) to stop the child: a command started asynchronously
+# (`roslaunch ... &`) by a non-interactive shell has its SIGINT/SIGQUIT set to
+# SIG_IGN (POSIX async-list behaviour), so sending it SIGINT is silently ignored
+# and the following `wait` blocks forever. SIGTERM is not ignored, and roslaunch
+# shuts its nodes down cleanly on SIGTERM.
 _supervise_forward_signal() {
   if [[ -n "${_SUPERVISE_CHILD_PID}" ]] \
       && kill -0 "${_SUPERVISE_CHILD_PID}" 2>/dev/null; then
-    kill -INT "${_SUPERVISE_CHILD_PID}" 2>/dev/null || true
+    kill -TERM "${_SUPERVISE_CHILD_PID}" 2>/dev/null || true
     wait "${_SUPERVISE_CHILD_PID}" 2>/dev/null || true
   fi
   exit 0
@@ -138,7 +144,9 @@ _supervise_loop() {
       fi
 
       if (( failures >= max_failures )); then
-        kill -INT "${_SUPERVISE_CHILD_PID}" 2>/dev/null || true
+        # SIGTERM, not SIGINT: the child was started async (`&`), so its SIGINT
+        # is SIG_IGN (POSIX) and signalling it SIGINT would hang the next `wait`.
+        kill -TERM "${_SUPERVISE_CHILD_PID}" 2>/dev/null || true
         wait "${_SUPERVISE_CHILD_PID}" 2>/dev/null || true
         break
       fi

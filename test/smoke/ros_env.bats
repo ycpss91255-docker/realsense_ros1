@@ -110,6 +110,19 @@ setup() {
     assert_failure
 }
 
+@test "supervisor stops the roslaunch child with SIGTERM, not SIGINT (#81)" {
+    # The roslaunch child is started async (`roslaunch ... &`), so a
+    # non-interactive shell sets its SIGINT/SIGQUIT to SIG_IGN (POSIX). `kill
+    # -INT` on it would be ignored and the following `wait` would hang forever
+    # (verified: restart-on-orphan and clean shutdown both stall). The
+    # supervisor must signal the child with SIGTERM, which is not ignored and
+    # which roslaunch handles with a clean node shutdown.
+    run grep -F 'kill -INT' /entrypoint.sh
+    assert_failure
+    run grep -F 'kill -TERM "${_SUPERVISE_CHILD_PID}"' /entrypoint.sh
+    assert_success
+}
+
 # -------------------- RealSense packages --------------------
 
 @test "realsense2_camera is installed" {

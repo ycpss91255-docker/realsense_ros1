@@ -1,6 +1,6 @@
 # TEST.md
 
-**72 tests** total.
+**73 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -23,7 +23,7 @@
 | `entrypoint passes non-roslaunch commands through unchanged (#79)` | Non-`roslaunch` command (e.g. `bash -c ...`) is not modified |
 | `entrypoint does not double-inject --wait when already present (#79)` | Existing `--wait` is not duplicated |
 
-### Entrypoint: remote-master supervision (6)
+### Entrypoint: remote-master supervision (7)
 
 | Test | Description |
 |------|-------------|
@@ -33,6 +33,7 @@
 | `supervision disabled for a non-roslaunch command (#81)` | Non-`roslaunch` command does not engage the supervisor |
 | `supervised node present in rosnode list is healthy (#81)` | `_node_registered` returns healthy when the node is in the list text |
 | `supervised node absent from rosnode list is unhealthy (#81)` | `_node_registered` returns unhealthy when the node is absent |
+| `supervisor stops the roslaunch child with SIGTERM, not SIGINT (#81)` | Regression guard: async child has SIGINT set to SIG_IGN, so the child is stopped with SIGTERM (not SIGINT) or `wait` hangs |
 
 ### RealSense packages (2)
 
