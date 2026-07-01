@@ -1,6 +1,6 @@
 # TEST.md
 
-**73 tests** total.
+**74 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -23,17 +23,18 @@
 | `entrypoint passes non-roslaunch commands through unchanged (#79)` | Non-`roslaunch` command (e.g. `bash -c ...`) is not modified |
 | `entrypoint does not double-inject --wait when already present (#79)` | Existing `--wait` is not duplicated |
 
-### Entrypoint: remote-master supervision (7)
+### Entrypoint: remote-master watchdog (8)
 
 | Test | Description |
 |------|-------------|
-| `supervision enabled for a remote master + roslaunch (default on) (#81)` | Remote master + `roslaunch` + default `ROS_MASTER_SUPERVISE` engages the supervisor |
-| `supervision disabled when ROS_MASTER_SUPERVISE=0 (#81)` | `ROS_MASTER_SUPERVISE=0` falls back to the plain gate |
-| `supervision disabled for a local master (#81)` | `localhost` master does not engage the supervisor |
-| `supervision disabled for a non-roslaunch command (#81)` | Non-`roslaunch` command does not engage the supervisor |
-| `supervised node present in rosnode list is healthy (#81)` | `_node_registered` returns healthy when the node is in the list text |
-| `supervised node absent from rosnode list is unhealthy (#81)` | `_node_registered` returns unhealthy when the node is absent |
-| `supervisor stops the roslaunch child with SIGTERM, not SIGINT (#81)` | Regression guard: async child has SIGINT set to SIG_IGN, so the child is stopped with SIGTERM (not SIGINT) or `wait` hangs |
+| `watchdog off by default for a remote master + roslaunch (#81)` | Opt-in: remote master + `roslaunch` + unset `WATCHDOG_ENABLED` falls back to the plain `--wait` gate |
+| `watchdog enabled with WATCHDOG_ENABLED=1 + remote master + roslaunch (#81)` | `WATCHDOG_ENABLED=1` + remote master + `roslaunch` engages the watchdog |
+| `watchdog disabled when WATCHDOG_ENABLED=0 (#81)` | `WATCHDOG_ENABLED=0` falls back to the plain gate |
+| `watchdog disabled for a local master even with WATCHDOG_ENABLED=1 (#81)` | `localhost` master does not engage the watchdog |
+| `watchdog disabled for a non-roslaunch command even with WATCHDOG_ENABLED=1 (#81)` | Non-`roslaunch` command does not engage the watchdog |
+| `watchdog node present in rosnode list is healthy (#81)` | `_node_registered` returns healthy when the node is in the list text |
+| `watchdog node absent from rosnode list is unhealthy (#81)` | `_node_registered` returns unhealthy when the node is absent |
+| `watchdog stops the roslaunch child with SIGTERM, not SIGINT (#81)` | Regression guard: async child has SIGINT set to SIG_IGN, so the child is stopped with SIGTERM (not SIGINT) or `wait` hangs |
 
 ### RealSense packages (2)
 

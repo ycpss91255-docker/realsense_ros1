@@ -228,26 +228,30 @@ just run -t runtime
 slave は master より先に起動しても（例: 起動時に自動起動）、master が現れた時点で
 きれいに登録され、未登録のゾンビノードになることはありません。
 
-リモートの `ROS_MASTER_URI` を持つ slave は、**master が起動後に再起動しても
-自己修復します**。同じポートで再起動した master は TCP 到達可能なままなので、
-roslaunch とノードは動き続けたまま静かに登録解除されます（`rostopic list` には
-名前が残るが `rosnode list` から `/camera` が消える）-- これは
-`restart: unless-stopped` では捕捉できません。entrypoint は*現在の* master 上の
-ノード登録を監視し、デバウンス窓の後に `roslaunch --wait` を再起動して新しい
-master へ再登録させます。調整ノブ（`.env` に記載、いずれも任意）とデフォルト値：
+リモートの `ROS_MASTER_URI` を持つ slave は、オプトインの watchdog により
+**master が起動後に再起動しても自己修復できます**。同じポートで再起動した master は
+TCP 到達可能なままなので、roslaunch とノードは動き続けたまま静かに登録解除されます
+（`rostopic list` には名前が残るが `rosnode list` から `/camera` が消える）-- これは
+`restart: unless-stopped` では捕捉できません。有効化すると、entrypoint は*現在の*
+master 上のノード登録を監視し、デバウンス窓の後に `roslaunch --wait` を再起動して
+新しい master へ再登録させます。
+
+watchdog は **オプトイン（デフォルト無効）** で、base の `[lifecycle] restart = no`
+と整合します。`.env` で有効化しノブを調整します：
 
 ```ini
-ROS_MASTER_SUPERVISE=1                        # 0 で無効化（素の --wait ゲートに戻る）
-ROS_MASTER_CHECK_INTERVAL=15                  # チェック間隔（秒）
-ROS_MASTER_CHECK_TIMEOUT=5                    # rosnode list クエリごとのタイムアウト（秒）
-ROS_MASTER_CHECK_FAILURES=3                   # 再起動までの連続失敗回数（~45 秒）
-ROS_SUPERVISE_NODE=/camera/realsense2_camera  # ヘルスシグナルとなるノード
+WATCHDOG_ENABLED=1                        # デフォルト無効；1 で watchdog を有効化
+WATCHDOG_INTERVAL=15                      # チェック間隔（秒）
+WATCHDOG_TIMEOUT=5                        # rosnode list クエリごとのタイムアウト（秒）
+WATCHDOG_FAILURES=3                       # 再起動までの連続失敗回数（~45 秒）
+WATCHDOG_ROSNODE=/camera/realsense2_camera  # ヘルスシグナルとなるノード
 ```
 
 デフォルトはブリップ耐性重視です（master 再起動は数分のダウンなので、1-2 秒の
-ネットワークブリップで再起動してはならない）。`just stop` は監視をきれいかつ
-高速に停止します。監視はリモート master で `roslaunch` を起動する場合のみ有効で、
-ローカル／未設定の master やその他のコマンドは変更されません。
+ネットワークブリップで再起動してはならない）。`just stop` は watchdog をきれいかつ
+高速に停止します。watchdog はリモート master で `roslaunch` を起動する場合のみ有効で、
+ローカル／未設定の master やその他のコマンドは変更されません。watchdog の有効・無効
+にかかわらず、上記の `--wait` ゲートはリモート master に対して自動的に適用されます。
 
 **master 側マシン：** master を実行して購読します（任意の ROS 1 環境、例えば
 `ros_distro` 環境）：

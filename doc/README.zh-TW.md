@@ -219,24 +219,28 @@ just run -t runtime
 重要 -- slave 可以早於 master 啟動（例如開機時自動啟動），仍會在 master 出現後乾淨
 地註冊，而不會變成一個未註冊的殭屍節點。
 
-設定了遠端 `ROS_MASTER_URI` 的 slave 在 **master 於啟動後重啟時也會自我修復**。
-master 在同一個 port 上重啟後仍可透過 TCP 連線，因此 roslaunch 與節點會繼續執行卻
-悄悄地取消註冊（`rostopic list` 仍看得到名稱，`rosnode list` 卻少了 `/camera`）--
-這是 `restart: unless-stopped` 抓不到的情況。entrypoint 會監看節點在*當前* master
-上的註冊狀態，並在一段防抖動視窗後重新啟動 `roslaunch --wait`，讓節點重新註冊到新
-的 master。可調參數（放進 `.env`，皆為選用）與預設值：
+設定了遠端 `ROS_MASTER_URI` 的 slave 還可透過一個選用的 watchdog，在 **master 於啟動
+後重啟時自我修復**。master 在同一個 port 上重啟後仍可透過 TCP 連線，因此 roslaunch
+與節點會繼續執行卻悄悄地取消註冊（`rostopic list` 仍看得到名稱，`rosnode list` 卻少
+了 `/camera`）-- 這是 `restart: unless-stopped` 抓不到的情況。啟用後，entrypoint 會監
+看節點在*當前* master 上的註冊狀態，並在一段防抖動視窗後重新啟動 `roslaunch --wait`，
+讓節點重新註冊到新的 master。
+
+watchdog 為 **選用（預設關閉）**，與 base 的 `[lifecycle] restart = no` 一致。
+在 `.env` 中啟用並調整參數：
 
 ```ini
-ROS_MASTER_SUPERVISE=1                        # 0 停用（退回單純的 --wait gate）
-ROS_MASTER_CHECK_INTERVAL=15                  # 每次檢查間隔（秒）
-ROS_MASTER_CHECK_TIMEOUT=5                    # 每次 rosnode list 查詢逾時（秒）
-ROS_MASTER_CHECK_FAILURES=3                   # 重啟前的連續失敗次數（~45 秒）
-ROS_SUPERVISE_NODE=/camera/realsense2_camera  # 作為健康訊號的節點
+WATCHDOG_ENABLED=1                        # 預設關閉；設為 1 啟用 watchdog
+WATCHDOG_INTERVAL=15                      # 每次檢查間隔（秒）
+WATCHDOG_TIMEOUT=5                        # 每次 rosnode list 查詢逾時（秒）
+WATCHDOG_FAILURES=3                       # 重啟前的連續失敗次數（~45 秒）
+WATCHDOG_ROSNODE=/camera/realsense2_camera  # 作為健康訊號的節點
 ```
 
 預設值偏向抗閃斷（master 重啟通常是數分鐘的停機，因此 1-2 秒的網路閃斷不應觸發
-重啟）。`just stop` 會乾淨且快速地關閉監督程序。監督只對遠端 master 且啟動
-`roslaunch` 時生效；本機／未設定的 master 與其他指令維持不變。
+重啟）。`just stop` 會乾淨且快速地關閉 watchdog。watchdog 只對遠端 master 且啟動
+`roslaunch` 時生效；本機／未設定的 master 與其他指令維持不變。無論 watchdog 是否啟
+用，上述 `--wait` gate 仍會對遠端 master 自動生效。
 
 **在 master 機器上：** 跑 master 並訂閱（任何 ROS 1 環境皆可，例如 `ros_distro`
 環境）：
