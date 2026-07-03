@@ -258,7 +258,7 @@ WORKDIR "${HOME}/work"
 EXPOSE 22
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["roslaunch", "realsense2_camera", "rs_camera.launch"]
+CMD ["roslaunch", "realsense2_camera", "rs_aligned_depth.launch"]
 
 ############################## runtime-test (ephemeral) ##############################
 # Install-check smoke for the runtime image (template v0.21.1+ #243).

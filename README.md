@@ -101,7 +101,7 @@ just build
 ./script/install_udev_rules.sh
 
 # 3. Launch the camera app. The `runtime` service's default command is
-#    `roslaunch realsense2_camera rs_camera.launch`; foreground shows the node logs:
+#    `roslaunch realsense2_camera rs_aligned_depth.launch`; foreground shows the node logs:
 just run -t runtime
 #    ...or detached:
 just run -d -t runtime
@@ -126,7 +126,7 @@ just exec -t runtime bash -ic 'rostopic hz /camera/depth/image_rect_raw'
 ```bash
 just run -t devel
 # inside the container:
-roslaunch realsense2_camera rs_camera.launch &   # start the camera
+roslaunch realsense2_camera rs_aligned_depth.launch &   # start the camera
 rosrun rqt_image_view rqt_image_view             # pick /camera/color/image_raw and /camera/depth/image_rect_raw
 ```
 
@@ -169,7 +169,7 @@ docker compose exec runtime bash # Enter running container
 ### Custom launch args
 
 The `runtime` image's default command is `roslaunch realsense2_camera
-rs_camera.launch`. To pass launch args, use the low-level `docker compose run`
+rs_aligned_depth.launch`. To pass launch args, use the low-level `docker compose run`
 form, which replaces the default launch:
 
 ```bash
@@ -369,7 +369,7 @@ graph TD
 | `devel` | `devel-base` | Shipped dev image (default CMD `bash`) |
 | `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests, discarded after build (ephemeral) |
 | `runtime-base` | `sys` | Minimal base (`sudo`) |
-| `runtime` | `runtime-base` | Shipped runtime image: RealSense packages + udev rules (default CMD `roslaunch realsense2_camera rs_camera.launch`) |
+| `runtime` | `runtime-base` | Shipped runtime image: RealSense packages + udev rules (default CMD `roslaunch realsense2_camera rs_aligned_depth.launch`) |
 | `runtime-test` | `runtime` | runtime smoke, discarded after build (ephemeral) |
 
 ## Smoke Tests

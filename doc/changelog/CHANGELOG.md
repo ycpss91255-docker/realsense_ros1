@@ -98,6 +98,13 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the master).
 
 ### Changed
+- The shipped `runtime` image now publishes aligned depth-to-color by default
+  (#85). Its default CMD switched from `rs_camera.launch` to Intel's packaged
+  `rs_aligned_depth.launch` (same launch with `align_depth` defaulting to
+  `true`), so `just run -t runtime` publishes
+  `/camera/aligned_depth_to_color/image_raw` out of the box. Override with the
+  low-level `docker compose run --rm runtime roslaunch realsense2_camera
+  rs_camera.launch ...` form to opt back out.
 - `config/docker/setup.conf`: remove the dead `cap_add`
   (`SYS_ADMIN`/`NET_ADMIN`/`MKNOD`) and `security_opt` (`seccomp:unconfined`)
   entries -- under `privileged = true` they are no-ops (#64). Move `/dev` from a

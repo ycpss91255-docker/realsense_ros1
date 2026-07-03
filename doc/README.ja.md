@@ -95,7 +95,7 @@ just build
 ./script/install_udev_rules.sh
 
 # 3. Launch the camera app. The `runtime` service's default command is
-#    `roslaunch realsense2_camera rs_camera.launch`; foreground shows the node logs:
+#    `roslaunch realsense2_camera rs_aligned_depth.launch`; foreground shows the node logs:
 just run -t runtime
 #    ...or detached:
 just run -d -t runtime
@@ -120,7 +120,7 @@ just exec -t runtime bash -ic 'rostopic hz /camera/depth/image_rect_raw'
 ```bash
 just run -t devel
 # inside the container:
-roslaunch realsense2_camera rs_camera.launch &   # start the camera
+roslaunch realsense2_camera rs_aligned_depth.launch &   # start the camera
 rosrun rqt_image_view rqt_image_view             # pick /camera/color/image_raw and /camera/depth/image_rect_raw
 ```
 
@@ -163,7 +163,7 @@ docker compose exec runtime bash # 実行中のコンテナに入る
 ### カスタム launch 引数
 
 `runtime` イメージのデフォルトコマンドは `roslaunch realsense2_camera
-rs_camera.launch` です。launch 引数を渡すには、デフォルトの launch を置き換える
+rs_aligned_depth.launch` です。launch 引数を渡すには、デフォルトの launch を置き換える
 低レベルの `docker compose run` 形式を使います：
 
 ```bash
@@ -360,7 +360,7 @@ graph TD
 | `devel` | `devel-base` | 出荷する開発イメージ（デフォルト CMD `bash`） |
 | `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests、ビルド後に破棄（一時的） |
 | `runtime-base` | `sys` | 最小ベース（`sudo`） |
-| `runtime` | `runtime-base` | 出荷するランタイムイメージ：RealSense パッケージ + udev ルール（デフォルト CMD `roslaunch realsense2_camera rs_camera.launch`） |
+| `runtime` | `runtime-base` | 出荷するランタイムイメージ：RealSense パッケージ + udev ルール（デフォルト CMD `roslaunch realsense2_camera rs_aligned_depth.launch`） |
 | `runtime-test` | `runtime` | runtime smoke、ビルド後に破棄（一時的） |
 
 ## Smoke Tests
