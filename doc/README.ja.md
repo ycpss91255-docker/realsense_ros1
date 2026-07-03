@@ -170,8 +170,8 @@ rs_aligned_depth.launch` です。launch 引数を渡すには、デフォルト
 # point cloud を有効化
 docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch filters:=pointcloud
 
-# depth を color にアライン
-docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch align_depth:=true
+# 非アラインの depth に戻す（出荷デフォルトはアライン済み）
+docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch
 
 # USB 2.x リンク向けの低減 profile（~6 Hz）
 docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch \
