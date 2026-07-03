@@ -164,8 +164,8 @@ launch 参数，请用底层的 `docker compose run` 形式，它会取代默认
 # 开启 point cloud
 docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch filters:=pointcloud
 
-# 将 depth 对齐到 color
-docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch align_depth:=true
+# 退回非对齐 depth（出货默认已对齐）
+docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch
 
 # USB 2.x 连线用的降阶 profile（~6 Hz）
 docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch \

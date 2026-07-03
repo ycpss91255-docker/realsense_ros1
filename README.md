@@ -176,8 +176,8 @@ form, which replaces the default launch:
 # Enable the point cloud
 docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch filters:=pointcloud
 
-# Align depth to colour
-docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch align_depth:=true
+# Opt out to non-aligned depth (the shipped default is now aligned)
+docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch
 
 # Reduced profile for a USB 2.x link (~6 Hz)
 docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch \
