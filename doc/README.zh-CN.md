@@ -92,7 +92,7 @@ just build
 ./script/install_udev_rules.sh
 
 # 3. 启动相机 app。`runtime` service 的默认命令是
-#    `roslaunch realsense2_camera rs_camera.launch`；前台会显示节点 log：
+#    `roslaunch realsense2_camera rs_aligned_depth.launch`；前台会显示节点 log：
 just run -t runtime
 #    ...或后台运行：
 just run -d -t runtime
@@ -116,7 +116,7 @@ just exec -t runtime bash -ic 'rostopic hz /camera/depth/image_rect_raw'
 ```bash
 just run -t devel
 # inside the container:
-roslaunch realsense2_camera rs_camera.launch &   # start the camera
+roslaunch realsense2_camera rs_aligned_depth.launch &   # start the camera
 rosrun rqt_image_view rqt_image_view             # pick /camera/color/image_raw and /camera/depth/image_rect_raw
 ```
 
@@ -157,7 +157,7 @@ docker compose exec runtime bash # 进入运行中的容器
 
 ### 自定义 launch 参数
 
-`runtime` 镜像的默认命令是 `roslaunch realsense2_camera rs_camera.launch`。要传入
+`runtime` 镜像的默认命令是 `roslaunch realsense2_camera rs_aligned_depth.launch`。要传入
 launch 参数，请用底层的 `docker compose run` 形式，它会取代默认 launch：
 
 ```bash
@@ -344,7 +344,7 @@ graph TD
 | `devel` | `devel-base` | 出货的开发镜像（默认 CMD `bash`） |
 | `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests，构建后丢弃（临时性） |
 | `runtime-base` | `sys` | 精简基础（`sudo`） |
-| `runtime` | `runtime-base` | 出货的运行时镜像：RealSense 软件包 + udev 规则（默认 CMD `roslaunch realsense2_camera rs_camera.launch`） |
+| `runtime` | `runtime-base` | 出货的运行时镜像：RealSense 软件包 + udev 规则（默认 CMD `roslaunch realsense2_camera rs_aligned_depth.launch`） |
 | `runtime-test` | `runtime` | runtime smoke，构建后丢弃（临时性） |
 
 ## Smoke Tests
