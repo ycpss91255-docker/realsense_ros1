@@ -8,6 +8,12 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `script/check_udev_rules_sync.sh` (#88): a drift guard that flags when the
+  vendored `config/realsense/99-realsense-libusb.rules` is missing a device rule
+  the pinned librealsense SDK tag (`v2.55.1`) ships. Compares only the
+  `SUBSYSTEMS==` rule lines (tolerating the vendored header comment + local
+  extra device IDs) and is network-optional (offline runs skip with exit 0), so
+  a CI job can invoke it non-blocking.
 - Multi-machine slave can self-heal when a **remote** master restarts after
   launch (#81), via an opt-in watchdog. Building on the #79/#80 boot gate,
   `script/entrypoint.sh` runs a supervised-restart loop when the watchdog is
@@ -30,6 +36,23 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   guarded by 8 `ros_env.bats` tests. Interim reaping `wait`s on the direct
   roslaunch child only; grandchildren orphaned by a hard kill need a PID 1 init,
   deferred to the base `init` toggle.
+
+### Changed
+- Build the RealSense stack from source instead of apt (#88). librealsense
+  **v2.55.1** (SDK) and the ros1-legacy **realsense-ros 2.3.2** wrapper are now
+  compiled in the `devel` stage and installed into `/opt/ros/noetic` (mirroring
+  the apt layout, so the entrypoint and paths are unchanged); `runtime` gets
+  them via `COPY --from=devel` of a `DESTDIR` staging tree (SDK bin tools
+  pruned) plus an online `rosdep` pass for the wrapper's exec-only ROS deps. The
+  apt `ros-noetic-realsense2-camera` / `ros-noetic-realsense2-description` were
+  removed from both `devel` and `runtime`; `realsense2_description` is now built
+  from the realsense-ros repo. The apt path pinned librealsense **2.50.0**
+  (Noetic EOL), which cannot stream a D455 on a Pi 5 (`-71` / uvc watchdog); the
+  self-built 2.55.1 streams it at ~30 fps. Versions are pinned and overridable
+  via `--build-arg LIBREALSENSE_VERSION` / `--build-arg REALSENSE_ROS_VERSION`;
+  this repo is **terminal** at this pair (ROS 1 / Noetic / ros1-legacy are EOL,
+  and 2.56+ cannot build against the legacy wrapper -- realsense-ros#3406). The
+  runtime default command (`rs_aligned_depth.launch`) is unchanged.
 
 ### Removed
 - Unused `tini` from the Dockerfile `runtime-base` stage (#81): it was installed

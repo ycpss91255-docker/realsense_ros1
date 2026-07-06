@@ -6,7 +6,7 @@
 
 ## TL;DR
 
-这是一个容器化的 ROS 1 RealSense 相机 **app**：`runtime` 镜像的默认命令就会 launch 相机节点、发布实时 **RGB + Depth** topic。通过 apt 安装 `ros-noetic-realsense2-camera` / `ros-noetic-realsense2-description`（会以传递依赖方式拉入 `librealsense2`），并内含 udev 规则以供 USB 访问。**仅支持 Noetic（Ubuntu 20.04 focal）**、多架构（x86_64 + ARM64 / 树莓派）。
+这是一个容器化的 ROS 1 RealSense 相机 **app**：`runtime` 镜像的默认命令就会 launch 相机节点、发布实时 **RGB + Depth** topic。从源码构建 **librealsense v2.55.1**（SDK）＋ ros1-legacy **realsense-ros 2.3.2** wrapper（apt 的 `librealsense` 2.50.0 太旧，无法在 Pi 5 上串流 D455），并内含 udev 规则以供 USB 访问。**仅支持 Noetic（Ubuntu 20.04 focal）**、多架构（x86_64 + ARM64 / 树莓派）。
 
 ```bash
 ./script/install_udev_rules.sh      # host 装一次（实体相机）
@@ -36,12 +36,12 @@ just build && just run -t runtime    # build + 启动相机 app
 
 ## 概述
 
-为 Intel RealSense 深度相机提供可复现的 ROS 1 环境。CI 为 **ROS 1 Noetic（Ubuntu 20.04 focal）** 构建镜像 —— 本 repo 为单一发行版；ROS 1 Kinetic **不在范围内**。镜像从 ROS apt 软件源安装 `ros-noetic-realsense2-camera` 和 `ros-noetic-realsense2-description` 软件包（`librealsense2` 库会作为其依赖以传递方式拉入），并将上游 udev 规则烤入镜像，使 USB 设备在容器内以正确的权限挂载。多架构基础镜像支持 x86_64 和 ARM64（树莓派、Jetson CPU 模式）。
+为 Intel RealSense 深度相机提供可复现的 ROS 1 环境。CI 为 **ROS 1 Noetic（Ubuntu 20.04 focal）** 构建镜像 —— 本 repo 为单一发行版；ROS 1 Kinetic **不在范围内**。镜像从源码构建 **librealsense v2.55.1**（SDK）和 ros1-legacy **realsense-ros 2.3.2** wrapper，并安装到 `/opt/ros/noetic`（对齐 apt 的布局）。apt 路径会锁定在 librealsense 2.50.0（Noetic EOL），无法在 Pi 5 上串流 D455（`-71` / uvc watchdog）；自建的 2.55.1 则能以约 30 fps 串流。版本已固定且可用 `--build-arg` 覆盖（`LIBREALSENSE_VERSION` / `REALSENSE_ROS_VERSION`）；本 repo 在此组合上为 **终端版本** —— ROS 1 / Noetic / ros1-legacy 均已 EOL，没有更新版本可追。镜像并将上游 udev 规则烤入镜像，使 USB 设备在容器内以正确的权限挂载。多架构基础镜像支持 x86_64 和 ARM64（树莓派、Jetson CPU 模式）。
 
 ## 功能特性
 
 - **单一发行版**：ROS 1 Noetic（Ubuntu 20.04 focal）；Kinetic 不在范围内
-- **Apt 安装**：从 ROS apt 软件源安装 `ros-noetic-realsense2-camera` 和 `ros-noetic-realsense2-description`（`librealsense2` 以传递依赖方式拉入）
+- **源码构建 RealSense stack**：从源码编译 librealsense v2.55.1（SDK）＋ ros1-legacy realsense-ros 2.3.2 wrapper（版本固定、可用 `--build-arg` 覆盖；在此 EOL 组合上为终端版本）。apt 的 2.50.0 太旧，无法在 Pi 5 上驱动 D455
 - **Smoke Test**：Bats 测试在构建时自动执行，验证环境正确性
 - **Docker Compose**：单一 `compose.yaml` 管理所有目标
 - **udev 规则**：预配置 RealSense USB 设备访问权限
@@ -364,6 +364,7 @@ realsense_ros1/
 ├── script/
 │   ├── entrypoint.sh            # 容器入口点（仓库自有）
 │   ├── install_udev_rules.sh    # 在 host 安装 RealSense udev 规则（仓库自有）
+│   ├── check_udev_rules_sync.sh # 漂移守卫：内置 udev 规则 vs 固定 SDK tag（仓库自有）
 │   ├── build.sh -> ../.base/script/docker/wrapper/build.sh   # 符号链接
 │   ├── run.sh   -> ../.base/script/docker/wrapper/run.sh     # 符号链接
 │   ├── exec.sh  -> ../.base/script/docker/wrapper/exec.sh    # 符号链接

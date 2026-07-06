@@ -4,8 +4,10 @@
 procedure for verifying a real Intel RealSense camera through the container.
 
 The container runs `privileged` with `/dev` mounted, so it sees USB devices on
-the host. The image ships the ROS 1 wrapper (`realsense2_camera`) plus the
-librealsense SDK CLI tools (`rs-enumerate-devices`, `realsense-viewer`, `rs-*`).
+the host. The `devel` image ships the ROS 1 wrapper (`realsense2_camera`) plus
+the source-built librealsense SDK CLI tools (`rs-enumerate-devices`,
+`realsense-viewer`, `rs-*`). (The `runtime` image is node-only -- it carries the
+wrapper and SDK libraries but not these CLI tools.)
 
 ## 0. Confirm the host sees the camera
 
@@ -63,9 +65,12 @@ realsense-viewer    # librealsense GUI
 rviz                # ROS 1 visualization
 ```
 
-The devel image installs the ROS 1 desktop tooling, so both `realsense-viewer`
-and `rviz` (plus the Qt/OpenGL/X stack they need) are available. The container's
-GUI mode + X11 mounts handle the display.
+`realsense-viewer` (and the `rs-*` tools) come from the source-built librealsense
+SDK, which the `devel` image compiles with the graphical examples enabled;
+`rviz` comes from the ROS 1 desktop tooling. Both (plus the Qt/OpenGL/X stack
+they need) are available in `devel`. The `runtime` image is node-only and does
+not ship the SDK GUI tools. The container's GUI mode + X11 mounts handle the
+display.
 
 ## 5. On-chip calibration (optional)
 

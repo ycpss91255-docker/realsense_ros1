@@ -6,7 +6,7 @@
 
 ## TL;DR
 
-容器化的 Intel RealSense ROS 1 相機 **app**：`runtime` 映像的預設指令會 launch 相機節點，並發布即時 **RGB + Depth** topic。透過 apt 安裝 `ros-noetic-realsense2-camera` / `ros-noetic-realsense2-description`（連帶拉入 `librealsense2`），並內含供 USB 存取的 udev 規則。**僅支援 Noetic（Ubuntu 20.04 focal）**、多架構（x86_64 + ARM64 / Raspberry Pi）。
+容器化的 Intel RealSense ROS 1 相機 **app**：`runtime` 映像的預設指令會 launch 相機節點，並發布即時 **RGB + Depth** topic。從原始碼建置 **librealsense v2.55.1**（SDK）＋ ros1-legacy **realsense-ros 2.3.2** wrapper（apt 的 `librealsense` 2.50.0 太舊，無法在 Pi 5 上串流 D455），並內含供 USB 存取的 udev 規則。**僅支援 Noetic（Ubuntu 20.04 focal）**、多架構（x86_64 + ARM64 / Raspberry Pi）。
 
 ```bash
 ./script/install_udev_rules.sh      # once on the host (physical camera)
@@ -36,12 +36,12 @@ just build && just run -t runtime    # build + launch the camera app
 
 ## 概觀
 
-提供可重現的 ROS 1 環境，供 Intel RealSense 深度相機使用。CI 為 **ROS 1 Noetic（Ubuntu 20.04 focal）** 建置映像 -- 本 repo 為單一發行版；ROS 1 Kinetic **不在範圍內**。映像會從 ROS apt 套件庫安裝 `ros-noetic-realsense2-camera` 與 `ros-noetic-realsense2-description` 套件（`librealsense2` 函式庫會以相依關係連帶拉入），並內建上游 udev 規則，讓 USB 裝置在容器內以正確的權限掛載。多架構基底映像支援 x86_64 與 ARM64（Raspberry Pi、Jetson CPU 模式）。
+提供可重現的 ROS 1 環境，供 Intel RealSense 深度相機使用。CI 為 **ROS 1 Noetic（Ubuntu 20.04 focal）** 建置映像 -- 本 repo 為單一發行版；ROS 1 Kinetic **不在範圍內**。映像會從原始碼建置 **librealsense v2.55.1**（SDK）與 ros1-legacy **realsense-ros 2.3.2** wrapper，並安裝到 `/opt/ros/noetic`（對齊 apt 的配置）。apt 路徑會鎖在 librealsense 2.50.0（Noetic EOL），無法在 Pi 5 上串流 D455（`-71` / uvc watchdog）；自建的 2.55.1 則能以約 30 fps 串流。版本已釘選且可用 `--build-arg` 覆寫（`LIBREALSENSE_VERSION` / `REALSENSE_ROS_VERSION`）；本 repo 在此組合上為 **終端版本** —— ROS 1 / Noetic / ros1-legacy 皆已 EOL，沒有更新版本可追。映像並內建上游 udev 規則，讓 USB 裝置在容器內以正確的權限掛載。多架構基底映像支援 x86_64 與 ARM64（Raspberry Pi、Jetson CPU 模式）。
 
 ## 功能特色
 
 - **單一發行版**：ROS 1 Noetic（Ubuntu 20.04 focal）；Kinetic 不在範圍內
-- **Apt 安裝**：從 ROS apt 套件庫安裝 `ros-noetic-realsense2-camera` 和 `ros-noetic-realsense2-description`（`librealsense2` 以相依關係連帶拉入）
+- **原始碼建置 RealSense stack**：從原始碼編譯 librealsense v2.55.1（SDK）＋ ros1-legacy realsense-ros 2.3.2 wrapper（版本釘選、可用 `--build-arg` 覆寫；在此 EOL 組合上為終端版本）。apt 的 2.50.0 太舊，無法在 Pi 5 上驅動 D455
 - **Smoke Test**：Bats 測試在建置時自動執行，驗證環境正確性
 - **Docker Compose**：單一 `compose.yaml` 管理所有目標
 - **udev 規則**：預先設定 RealSense USB 裝置存取權限
@@ -364,6 +364,7 @@ realsense_ros1/
 ├── script/
 │   ├── entrypoint.sh            # 容器進入點（repo 自有）
 │   ├── install_udev_rules.sh    # 在 host 安裝 RealSense udev 規則（repo 自有）
+│   ├── check_udev_rules_sync.sh # 漂移守衛：內建 udev 規則 vs 釘選 SDK tag（repo 自有）
 │   ├── build.sh -> ../.base/script/docker/wrapper/build.sh   # symlink
 │   ├── run.sh   -> ../.base/script/docker/wrapper/run.sh     # symlink
 │   ├── exec.sh  -> ../.base/script/docker/wrapper/exec.sh    # symlink
