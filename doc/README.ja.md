@@ -6,7 +6,7 @@
 
 ## TL;DR
 
-コンテナ化された ROS 1 RealSense カメラ **アプリ**：`runtime` イメージのデフォルトコマンドがカメラノードを launch し、リアルタイムの **RGB + Depth** トピックを配信します。apt から `ros-noetic-realsense2-camera` と `ros-noetic-realsense2-description` をインストールし（これにより `librealsense2` が依存関係として推移的に取り込まれます）、USB アクセス用の udev ルールを同梱します。**Noetic（Ubuntu 20.04 focal）のみ**、マルチアーキ（x86_64 + ARM64 / Raspberry Pi）。
+コンテナ化された ROS 1 RealSense カメラ **アプリ**：`runtime` イメージのデフォルトコマンドがカメラノードを launch し、リアルタイムの **RGB + Depth** トピックを配信します。**librealsense v2.55.1**（SDK）＋ ros1-legacy **realsense-ros 2.3.2** ラッパーをソースからビルドし（apt の `librealsense` 2.50.0 は古すぎて Pi 5 上で D455 をストリームできません）、USB アクセス用の udev ルールを同梱します。**Noetic（Ubuntu 20.04 focal）のみ**、マルチアーキ（x86_64 + ARM64 / Raspberry Pi）。
 
 ```bash
 ./script/install_udev_rules.sh      # once on the host (physical camera)
@@ -36,12 +36,12 @@ just build && just run -t runtime    # build + launch the camera app
 
 ## 概要
 
-Intel RealSense 深度カメラ向けに、再現可能な ROS 1 環境を提供します。CI は **ROS 1 Noetic（Ubuntu 20.04 focal）** でイメージをビルドします -- 本リポジトリは単一ディストロで、ROS 1 Kinetic は **対象外** です。ROS apt リポジトリから `ros-noetic-realsense2-camera` と `ros-noetic-realsense2-description` パッケージをインストールし（`librealsense2` ライブラリはその依存関係として推移的に取り込まれます）、さらに上流の udev ルールを焼き込んでいるため、USB デバイスがコンテナ内で正しい権限のもとで起動します。マルチアーキテクチャのベースイメージは x86_64 と ARM64（Raspberry Pi、Jetson CPU モード）をサポートします。
+Intel RealSense 深度カメラ向けに、再現可能な ROS 1 環境を提供します。CI は **ROS 1 Noetic（Ubuntu 20.04 focal）** でイメージをビルドします -- 本リポジトリは単一ディストロで、ROS 1 Kinetic は **対象外** です。**librealsense v2.55.1**（SDK）と ros1-legacy **realsense-ros 2.3.2** ラッパーをソースからビルドし、`/opt/ros/noetic` にインストールします（apt のレイアウトに合わせています）。apt の経路は librealsense 2.50.0（Noetic EOL）に固定され、Pi 5 上で D455 をストリームできません（`-71` / uvc watchdog）。自前ビルドの 2.55.1 は約 30 fps でストリームします。バージョンは固定されており `--build-arg`（`LIBREALSENSE_VERSION` / `REALSENSE_ROS_VERSION`）で上書き可能です。本リポジトリはこの組み合わせで **終端版** です —— ROS 1 / Noetic / ros1-legacy はすべて EOL で、追うべき新しいバージョンはありません。さらに上流の udev ルールを焼き込んでいるため、USB デバイスがコンテナ内で正しい権限のもとで起動します。マルチアーキテクチャのベースイメージは x86_64 と ARM64（Raspberry Pi、Jetson CPU モード）をサポートします。
 
 ## 機能
 
 - **単一ディストロ**：ROS 1 Noetic（Ubuntu 20.04 focal）；Kinetic は対象外
-- **Apt ベースのインストール**：ROS apt リポジトリから `ros-noetic-realsense2-camera` と `ros-noetic-realsense2-description`（`librealsense2` は推移的に取り込まれる）
+- **ソースビルドの RealSense スタック**：librealsense v2.55.1（SDK）＋ ros1-legacy realsense-ros 2.3.2 ラッパーをソースからコンパイル（バージョン固定、`--build-arg` で上書き可能。この EOL の組み合わせで終端版）。apt の 2.50.0 は古すぎて Pi 5 上で D455 を駆動できません
 - **Smoke Test**：Bats テストがビルド時に自動実行され、環境を検証
 - **Docker Compose**：単一の `compose.yaml` で全ターゲットを管理
 - **udev ルール**：RealSense USB デバイスアクセス用に事前設定済み
@@ -380,6 +380,7 @@ realsense_ros1/
 ├── script/
 │   ├── entrypoint.sh            # コンテナエントリポイント（リポジトリ所有）
 │   ├── install_udev_rules.sh    # ホストに RealSense udev ルールをインストール（リポジトリ所有）
+│   ├── check_udev_rules_sync.sh # ドリフトガード：同梱 udev ルール vs 固定 SDK タグ（リポジトリ所有）
 │   ├── build.sh -> ../.base/script/docker/wrapper/build.sh   # シンボリックリンク
 │   ├── run.sh   -> ../.base/script/docker/wrapper/run.sh     # シンボリックリンク
 │   ├── exec.sh  -> ../.base/script/docker/wrapper/exec.sh    # シンボリックリンク

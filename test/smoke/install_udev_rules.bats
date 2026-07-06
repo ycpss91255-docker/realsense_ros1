@@ -32,3 +32,27 @@ setup() {
 @test "install_udev_rules.sh is executable" {
     [ -x /lint/install_udev_rules.sh ]
 }
+
+# -------------------- check_udev_rules_sync.sh --------------------
+# The udev-rules drift guard (#88): flags the vendored rules missing a device
+# the pinned librealsense SDK tag ships. Only the --help contract is exercised
+# here; the network diff is offline-skipped and not run in bats.
+
+@test "check_udev_rules_sync.sh -h exits 0" {
+    run bash /lint/check_udev_rules_sync.sh -h
+    assert_success
+}
+
+@test "check_udev_rules_sync.sh --help exits 0" {
+    run bash /lint/check_udev_rules_sync.sh --help
+    assert_success
+}
+
+@test "check_udev_rules_sync.sh -h prints usage" {
+    run bash /lint/check_udev_rules_sync.sh -h
+    assert_line --partial "Usage:"
+}
+
+@test "check_udev_rules_sync.sh is executable" {
+    [ -x /lint/check_udev_rules_sync.sh ]
+}

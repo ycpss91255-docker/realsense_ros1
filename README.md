@@ -6,7 +6,7 @@
 
 ## TL;DR
 
-An Intel RealSense camera **as a containerized ROS 1 app**: the `runtime` image's default command launches the camera node and publishes live **RGB + depth** topics. Installs `ros-noetic-realsense2-camera` / `ros-noetic-realsense2-description` from apt (pulling in `librealsense2`) and ships the udev rules for USB access. **Noetic (Ubuntu 20.04 focal) only**, multi-arch (x86_64 + ARM64 / Raspberry Pi).
+An Intel RealSense camera **as a containerized ROS 1 app**: the `runtime` image's default command launches the camera node and publishes live **RGB + depth** topics. Builds **librealsense v2.55.1** (SDK) + the ros1-legacy **realsense-ros 2.3.2** wrapper from source (apt's `librealsense` 2.50.0 is too old to stream a D455 on a Pi 5) and ships the udev rules for USB access. **Noetic (Ubuntu 20.04 focal) only**, multi-arch (x86_64 + ARM64 / Raspberry Pi).
 
 ```bash
 ./script/install_udev_rules.sh      # once on the host (physical camera)
@@ -38,17 +38,22 @@ just build && just run -t runtime    # build + launch the camera app
 
 Provides a reproducible ROS 1 environment for Intel RealSense depth cameras. CI
 builds the image for **ROS 1 Noetic (Ubuntu 20.04 focal)** -- this is a
-single-distro repo; ROS 1 Kinetic is **out of scope**. It installs
-`ros-noetic-realsense2-camera` and `ros-noetic-realsense2-description` from the
-ROS apt repository (the `librealsense2` libraries come in transitively as their
-dependency) and ships with the upstream udev rules baked in so USB devices come
-up under the correct permissions inside the container. The multi-arch base image
+single-distro repo; ROS 1 Kinetic is **out of scope**. It builds **librealsense
+v2.55.1** (the SDK) and the ros1-legacy **realsense-ros 2.3.2** wrapper from
+source and installs them into `/opt/ros/noetic` (mirroring the apt layout). The
+apt path pinned librealsense 2.50.0 (Noetic EOL), which cannot stream a D455 on
+a Pi 5 (`-71` / uvc watchdog); the self-built 2.55.1 streams it at ~30 fps. The
+versions are pinned and `--build-arg` overridable
+(`LIBREALSENSE_VERSION` / `REALSENSE_ROS_VERSION`), and this repo is **terminal**
+at this pair -- ROS 1 / Noetic / ros1-legacy are all EOL, so there is nothing
+newer to chase. The upstream udev rules are baked in so USB devices come up
+under the correct permissions inside the container. The multi-arch base image
 supports x86_64 and ARM64 (Raspberry Pi, Jetson CPU mode).
 
 ## Features
 
 - **Single distro**: ROS 1 Noetic (Ubuntu 20.04 focal); Kinetic is out of scope
-- **Apt-based install**: `ros-noetic-realsense2-camera` and `ros-noetic-realsense2-description` from the ROS apt repository (`librealsense2` pulled in transitively)
+- **Source-built RealSense stack**: librealsense v2.55.1 (SDK) + ros1-legacy realsense-ros 2.3.2 wrapper compiled from source (pinned, `--build-arg` overridable; terminal at this EOL pair). apt's 2.50.0 is too old for a D455 on the Pi 5
 - **Smoke Test**: Bats tests run automatically during build to verify environment
 - **Docker Compose**: single `compose.yaml` manages all targets
 - **udev rules**: Pre-configured for RealSense USB device access
@@ -391,6 +396,7 @@ realsense_ros1/
 ├── script/
 │   ├── entrypoint.sh            # Container entrypoint (repo-owned)
 │   ├── install_udev_rules.sh    # Install RealSense udev rules on the host (repo-owned)
+│   ├── check_udev_rules_sync.sh # Drift guard: vendored udev rules vs pinned SDK tag (repo-owned)
 │   ├── build.sh -> ../.base/script/docker/wrapper/build.sh   # symlink
 │   ├── run.sh   -> ../.base/script/docker/wrapper/run.sh     # symlink
 │   ├── exec.sh  -> ../.base/script/docker/wrapper/exec.sh    # symlink

@@ -1,6 +1,6 @@
 # TEST.md
 
-**74 tests** total.
+**78 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -40,8 +40,8 @@
 
 | Test | Description |
 |------|-------------|
-| `realsense2_camera is installed` | `ros-${ROS_DISTRO}-realsense2-camera` package installed |
-| `realsense2_description is installed` | `ros-${ROS_DISTRO}-realsense2-description` package installed |
+| `realsense2_camera discoverable via rospack` | Source-built wrapper (#88) is on `ROS_PACKAGE_PATH` (`rospack find realsense2_camera`) |
+| `librealsense2 SDK library present` | Self-built librealsense v2.55.1 landed at `/opt/ros/${ROS_DISTRO}/lib/librealsense2.so*` |
 
 ### Desktop GUI (devel) (1)
 
@@ -91,6 +91,15 @@
 | `install_udev_rules.sh --help exits 0` | Help exits successfully |
 | `install_udev_rules.sh -h prints usage` | Help output contains "Usage:" |
 | `install_udev_rules.sh is executable` | Script carries the executable bit so the documented `./script/install_udev_rules.sh` works |
+
+### check_udev_rules_sync.sh (4)
+
+| Test | Description |
+|------|-------------|
+| `check_udev_rules_sync.sh -h exits 0` | Help exits successfully |
+| `check_udev_rules_sync.sh --help exits 0` | Help exits successfully |
+| `check_udev_rules_sync.sh -h prints usage` | Help output contains "Usage:" |
+| `check_udev_rules_sync.sh is executable` | Drift-guard script carries the executable bit |
 
 ## .base/test/smoke/script_help.bats
 
