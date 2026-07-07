@@ -1,0 +1,150 @@
+name: Build librealsense SDK image
+
+# Pre-builds the librealsense SDK ONCE and publishes it to GHCR so the main
+# repo build (and CI) consumes it as a prebuilt image instead of recompiling
+# librealsense (~15-25 min) on every run. ROS 1 is terminal at v2.55.1, so this
+# image is effectively built once and never changes -- hence manual dispatch
+# plus a path trigger for edits to the SDK Dockerfile.
+#
+# Per-arch NATIVE builds (linux/amd64 -> ubuntu-latest, linux/arm64 ->
+# ubuntu-24.04-arm) mirror base's build-worker: no QEMU emulation. Each shard
+# pushes an image by DIGEST, then a merge job assembles the multi-arch manifest
+# under the tag noetic-${LIBREALSENSE_VERSION}.
+#
+# ONE-TIME OPERATIONAL PREREQUISITE (blocks the main CI build otherwise):
+# GHCR packages first published via GITHUB_TOKEN are PRIVATE by default, and
+# the main Dockerfile's `FROM ghcr.io/.../librealsense:noetic-v2.55.1` is pulled
+# ANONYMOUSLY in CI (same as the base test-tools image). So the FIRST run of
+# this workflow must complete AND the librealsense package must be flipped to
+# PUBLIC (repo/org Packages -> librealsense -> Package settings -> Change
+# visibility -> Public) BEFORE the main Dockerfile change lands on main --
+# otherwise the main build fails at the FROM with `unauthorized`.
+#
+# Publish is gated to `main` (push trigger below): the SDK manifest is only
+# (re)published from the protected branch, not from every feature branch that
+# happens to touch these paths. Use workflow_dispatch to build ad hoc.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "docker/librealsense/**"
+      - ".github/workflows/build-librealsense.yaml"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/ycpss91255-docker/librealsense
+  ROS_DISTRO: noetic
+  LIBREALSENSE_VERSION: v2.55.1
+
+jobs:
+  # ────────────────────────────────────────────────────────────────
+  # Per-platform native build. Each shard pushes an untagged image by
+  # digest; the merge job below stitches the digests into one manifest.
+  # ────────────────────────────────────────────────────────────────
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    outputs:
+      version: ${{ steps.vars.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Prepare platform vars
+        id: vars
+        run: |
+          set -euo pipefail
+          platform="${{ matrix.platform }}"
+          echo "arch=${platform#linux/}" >> "${GITHUB_OUTPUT}"
+          echo "version=${ROS_DISTRO}-${LIBREALSENSE_VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: docker/librealsense
+          file: docker/librealsense/Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            ROS_DISTRO=${{ env.ROS_DISTRO }}
+            LIBREALSENSE_VERSION=${{ env.LIBREALSENSE_VERSION }}
+          cache-from: type=gha,scope=librealsense-${{ steps.vars.outputs.arch }}
+          cache-to: type=gha,scope=librealsense-${{ steps.vars.outputs.arch }},mode=max
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ steps.vars.outputs.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ────────────────────────────────────────────────────────────────
+  # Merge the per-arch digests into a single multi-arch manifest tagged
+  # noetic-${LIBREALSENSE_VERSION} (e.g. noetic-v2.55.1).
+  # ────────────────────────────────────────────────────────────────
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push manifest
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          tag="${IMAGE}:${ROS_DISTRO}-${LIBREALSENSE_VERSION}"
+          # shellcheck disable=SC2046
+          docker buildx imagetools create -t "${tag}" \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      - name: Inspect manifest
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "${IMAGE}:${ROS_DISTRO}-${LIBREALSENSE_VERSION}"
