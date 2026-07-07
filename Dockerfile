@@ -374,7 +374,10 @@ WORKDIR "${HOME}/work"
 EXPOSE 22
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["roslaunch", "realsense2_camera", "rs_aligned_depth.launch"]
+# initial_reset:=true resets the camera at startup so a D455 cold-start on the
+# RSUSB/arm64 backend does not wedge the first stream-open (RS2_USB_STATUS_IO,
+# topics stuck at 0 Hz); see #93. Adds a few seconds; override the arg to skip.
+CMD ["roslaunch", "realsense2_camera", "rs_aligned_depth.launch", "initial_reset:=true"]
 
 ############################## runtime-test (ephemeral) ##############################
 # Install-check smoke for the runtime image (template v0.21.1+ #243).

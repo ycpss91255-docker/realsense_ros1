@@ -38,6 +38,11 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   deferred to the base `init` toggle.
 
 ### Changed
+- The `runtime` image now launches with `initial_reset:=true` by default (#93):
+  on the RSUSB userspace backend, a D455 cold-start on arm64 (Pi 5) could wedge
+  the first stream-open (`RS2_USB_STATUS_IO`, topics stuck at 0 Hz); resetting
+  the device at startup clears it. Adds a few seconds to launch; `runtime` CMD
+  only (so `devel` is unaffected), and the arg is overridable.
 - Build the RealSense stack from source instead of apt (#88). librealsense
   **v2.55.1** (SDK) and the ros1-legacy **realsense-ros 2.3.2** wrapper are now
   compiled in the `devel` stage and installed into `/opt/ros/noetic` (mirroring
