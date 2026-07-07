@@ -19,6 +19,14 @@ ARG LIBREALSENSE_VERSION="v2.55.1"
 # (instead of self-building the tools) is the template's canonical pattern
 # (Dockerfile.example); see the sibling app/realsense_ros2 for the same setup.
 ARG TEST_TOOLS_IMAGE="test-tools:local"
+# Prebuilt librealsense SDK image. Resolves to `librealsense:local` for the
+# local `just build` flow (the pre-build hook script/hooks/pre/build.sh
+# auto-builds it from docker/librealsense/Dockerfile when LIBREALSENSE_IMAGE is
+# unset) or to the multi-arch ghcr.io/ycpss91255-docker/librealsense:noetic-v2.55.1
+# in CI (injected via build_args, so the FROM below pulls the prebuilt image
+# instead of recompiling librealsense). Same dual-source pattern as
+# TEST_TOOLS_IMAGE above; see the sibling app/realsense_ros2 for the same setup.
+ARG LIBREALSENSE_IMAGE="librealsense:local"
 
 ############################## rs_sdk ##############################
 # Prebuilt librealsense SDK (issue #88 / option B). Compiled ONCE by
@@ -29,7 +37,7 @@ ARG TEST_TOOLS_IMAGE="test-tools:local"
 # /rs-stage (tools-pruned, for the runtime overlay). Multi-arch, so the tag
 # resolves the matching variant per build platform.
 # hadolint ignore=DL3006
-FROM ghcr.io/ycpss91255-docker/librealsense:${ROS_DISTRO}-${LIBREALSENSE_VERSION} AS rs_sdk
+FROM ${LIBREALSENSE_IMAGE} AS rs_sdk
 
 ############################## sys ##############################
 FROM ros:${ROS_DISTRO}-${ROS_TAG}-${UBUNTU_CODENAME} AS sys

@@ -81,6 +81,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Publish gate: build (and thus RUN) the SDK `test` stage before pushing.
+      # A tree that fails the asserts aborts here so a broken SDK image never
+      # reaches GHCR. Same cache scope as the push below, so the librealsense
+      # compile is shared -- this step warms the cache and the push reuses it.
+      - name: Build and test SDK (publish gate)
+        uses: docker/build-push-action@v7
+        with:
+          context: docker/librealsense
+          file: docker/librealsense/Dockerfile
+          platforms: ${{ matrix.platform }}
+          target: test
+          push: false
+          build-args: |
+            ROS_DISTRO=${{ env.ROS_DISTRO }}
+            LIBREALSENSE_VERSION=${{ env.LIBREALSENSE_VERSION }}
+          cache-from: type=gha,scope=librealsense-${{ steps.vars.outputs.arch }}
+          cache-to: type=gha,scope=librealsense-${{ steps.vars.outputs.arch }},mode=max
+
+      # Push the `export` (scratch) target: the published image is just the two
+      # librealsense DESTDIR trees the consumer COPYs, not the fat build image.
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v7
@@ -88,6 +108,7 @@ jobs:
           context: docker/librealsense
           file: docker/librealsense/Dockerfile
           platforms: ${{ matrix.platform }}
+          target: export
           build-args: |
             ROS_DISTRO=${{ env.ROS_DISTRO }}
             LIBREALSENSE_VERSION=${{ env.LIBREALSENSE_VERSION }}

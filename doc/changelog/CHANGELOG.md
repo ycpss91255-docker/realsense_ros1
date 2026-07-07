@@ -8,6 +8,19 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `script/hooks/pre/build.sh` (base #440 pre-build hook): for a local
+  `just build` / `./build.sh` (with `LIBREALSENSE_IMAGE` unset) it auto-builds
+  `librealsense:local` from `docker/librealsense/Dockerfile` before the main
+  build, mirroring how `build.sh` auto-builds `test-tools:local`. The local
+  build is now self-contained -- no GHCR pull needed. If `LIBREALSENSE_IMAGE`
+  is already set (CI passes the `noetic-v2.55.1` GHCR tag) the hook is a no-op.
+- `docker/librealsense/Dockerfile` gains a `test` stage (publish-time smoke
+  GATE: asserts the `/rs-full` + `/rs-stage` trees exist, `librealsense2.so` is
+  present and fully linkable with no `not found`, the versioned soname is
+  present, and `/rs-stage` is pruned of the viewer / `rs-*` tools / GL lib) and
+  a `scratch`-based `export` stage. `build-librealsense.yaml` now builds
+  `--target test` (`push: false`) as a gate BEFORE publishing, so a broken SDK
+  image can never reach GHCR.
 - `script/check_udev_rules_sync.sh` (#88): a drift guard that flags when the
   vendored `config/realsense/99-realsense-libusb.rules` is missing a device rule
   the pinned librealsense SDK tag (`v2.55.1`) ships. Compares only the
@@ -38,6 +51,20 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   deferred to the base `init` toggle.
 
 ### Changed
+- The main Dockerfile's `rs_sdk` source is now parameterized via a global
+  `ARG LIBREALSENSE_IMAGE="librealsense:local"` + `FROM ${LIBREALSENSE_IMAGE}`,
+  mirroring base's `TEST_TOOLS_IMAGE` dual-source pattern. Local builds FROM
+  `librealsense:local` (built by the new `script/hooks/pre/build.sh` pre-build
+  hook, no GHCR needed -> self-contained), while `main.yaml` passes
+  `LIBREALSENSE_IMAGE=ghcr.io/ycpss91255-docker/librealsense:noetic-v2.55.1`
+  through `build_args` so CI PULLS the prebuilt SDK. The wrapper build, runtime
+  overlay, entrypoint, and CMD are unchanged.
+- The published `librealsense` SDK image is now the slim `scratch`-based
+  `export` target -- literally just the `/rs-full` + `/rs-stage` DESTDIR trees
+  the consumer COPYs, with the ros-base + build toolchain underneath dropped
+  (dead weight, since nothing runs the SDK image). The publish workflow's
+  build-and-push step now targets `export`; the trees are at the same paths, so
+  every `COPY --from=rs_sdk` against the image is unchanged.
 - librealsense is now consumed as a **prebuilt GHCR image** instead of being
   compiled on every build (option B). The SDK (v2.55.1) is built ONCE by the new
   `.github/workflows/build-librealsense.yaml` multi-arch workflow and published

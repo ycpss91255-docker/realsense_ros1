@@ -36,10 +36,18 @@ jobs:
       image_name: realsense_ros1
       platforms: linux/amd64,linux/arm64
       test_tools_version: v0.41.0
+      # LIBREALSENSE_IMAGE points CI at the prebuilt SDK published by
+      # build-librealsense.yaml, so buildx PULLS it instead of recompiling
+      # librealsense (~15-25 min) per run. This repo is TERMINAL at a single
+      # distro (noetic) and a single pin (v2.55.1), so the tag is a static
+      # literal -- keep it in sync with the LIBREALSENSE_VERSION ARG in the main
+      # Dockerfile and build-librealsense.yaml. Local builds omit this arg -> the
+      # Dockerfile default `librealsense:local` (built by script/hooks/pre/build.sh).
       build_args: |
         ROS_DISTRO=${{ matrix.target.ros_distro }}
         ROS_TAG=${{ matrix.target.ros_tag }}
         UBUNTU_CODENAME=${{ matrix.target.ubuntu_codename }}
+        LIBREALSENSE_IMAGE=ghcr.io/ycpss91255-docker/librealsense:noetic-v2.55.1
 
   # Stable-named aggregator so branch protection's required status check does
   # not have to enumerate every matrix entry. Branch protection references
