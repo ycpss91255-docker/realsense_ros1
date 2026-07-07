@@ -387,7 +387,10 @@ See [TEST.md](doc/test/TEST.md) for the automatic build-time tests,
 
 ```text
 realsense_ros1/
-├── Dockerfile                   # Multi-stage build
+├── Dockerfile                   # Multi-stage build (FROMs the prebuilt librealsense SDK image)
+├── docker/
+│   └── librealsense/
+│       └── Dockerfile           # Prebuilt librealsense SDK source (built once, published to GHCR)
 ├── LICENSE
 ├── README.md
 ├── justfile -> .base/script/docker/justfile        # symlink (user entry point)
@@ -423,7 +426,8 @@ realsense_ros1/
 │   └── test/
 │       └── TEST.md              # automatic build-time smoke tests
 ├── .github/workflows/
-│   └── main.yaml                # CI (calls base reusable build/release workers)
+│   ├── main.yaml                # CI (calls base reusable build/release workers)
+│   └── build-librealsense.yaml  # Publishes the prebuilt librealsense SDK image to GHCR
 └── test/
     └── smoke/                   # repo-owned bats tests
         ├── ros_env.bats

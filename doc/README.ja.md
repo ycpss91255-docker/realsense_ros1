@@ -371,7 +371,10 @@ graph TD
 
 ```text
 realsense_ros1/
-├── Dockerfile                   # マルチステージビルド
+├── Dockerfile                   # マルチステージビルド（事前ビルド済み librealsense SDK イメージを FROM）
+├── docker/
+│   └── librealsense/
+│       └── Dockerfile           # 事前ビルド librealsense SDK ソース（一度だけビルドし GHCR に公開）
 ├── LICENSE
 ├── README.md
 ├── justfile -> .base/script/docker/justfile        # シンボリックリンク（ユーザーエントリポイント）
@@ -407,7 +410,8 @@ realsense_ros1/
 │   └── test/
 │       └── TEST.md              # ビルド時の自動 smoke テスト
 ├── .github/workflows/
-│   └── main.yaml                # CI（base の再利用可能な build/release ワーカーを呼び出す）
+│   ├── main.yaml                # CI（base の再利用可能な build/release ワーカーを呼び出す）
+│   └── build-librealsense.yaml  # 事前ビルド librealsense SDK イメージを GHCR に公開
 └── test/
     └── smoke/                   # リポジトリ所有の bats テスト
         ├── ros_env.bats

@@ -1,6 +1,13 @@
 ARG ROS_DISTRO="noetic"
 ARG ROS_TAG="ros-base"
 ARG UBUNTU_CODENAME="focal"
+# librealsense SDK pin. Declared before the first FROM so the `rs_sdk` stage's
+# FROM tag can reference it (FROM-line ARGs must be global or pre-FROM). This
+# repo is TERMINAL at v2.55.1 (the ceiling the ros1-legacy wrapper builds
+# against -- 2.56+ pulls ROS 2 DDS artifacts, realsense-ros#3406), so the pin
+# never moves. The prebuilt SDK image is produced by
+# .github/workflows/build-librealsense.yaml and consumed below via `rs_sdk`.
+ARG LIBREALSENSE_VERSION="v2.55.1"
 # Pre-built lint + bats tools image (ShellCheck, Hadolint, Bats + the
 # bats-support/assert/mock extensions). Resolves to `test-tools:local` for the
 # local `just build` flow (build.sh auto-builds it from
@@ -12,6 +19,17 @@ ARG UBUNTU_CODENAME="focal"
 # (instead of self-building the tools) is the template's canonical pattern
 # (Dockerfile.example); see the sibling app/realsense_ros2 for the same setup.
 ARG TEST_TOOLS_IMAGE="test-tools:local"
+
+############################## rs_sdk ##############################
+# Prebuilt librealsense SDK (issue #88 / option B). Compiled ONCE by
+# .github/workflows/build-librealsense.yaml and published to GHCR, so CI no
+# longer recompiles librealsense (~15-25 min) on every run -- it just pulls
+# this image and COPYs the pre-built trees into the wrapper build below. The
+# image carries two DESTDIR trees: /rs-full (full SDK: viewer + rs-* + gl) and
+# /rs-stage (tools-pruned, for the runtime overlay). Multi-arch, so the tag
+# resolves the matching variant per build platform.
+# hadolint ignore=DL3006
+FROM ghcr.io/ycpss91255-docker/librealsense:${ROS_DISTRO}-${LIBREALSENSE_VERSION} AS rs_sdk
 
 ############################## sys ##############################
 FROM ros:${ROS_DISTRO}-${ROS_TAG}-${UBUNTU_CODENAME} AS sys
@@ -121,11 +139,16 @@ RUN apt-get update && \
         # the one wrapper dep not already in ros-desktop), so install it
         # explicitly and skip-key it in the rosdep calls below (#88).
         ros-${ROS_DISTRO}-ddynamic-reconfigure \
-        # librealsense source-build deps (Intel's official Ubuntu list). The
-        # RealSense SDK + ros1-legacy wrapper are built from source below, so
-        # the apt ros-noetic-realsense2-* packages -- pinned to the EOL
-        # librealsense 2.50.0, which cannot stream a D455 on a Pi 5 (-71 / uvc
-        # watchdog) -- are deliberately NOT installed (issue #88). git / wget /
+        # librealsense link + devel-tools runtime deps. librealsense itself is
+        # NO LONGER compiled here -- it comes prebuilt from the `rs_sdk` image
+        # (issue #88 / option B; see .github/workflows/build-librealsense.yaml).
+        # These stay because the catkin wrapper built below links realsense2_camera
+        # against the copied librealsense2.so (needs cmake / build-essential /
+        # pkg-config + the libusb/libssl/libudev the SDK links) AND devel keeps the
+        # full SDK viewer + librealsense2-gl.so, whose GTK/GLFW/GL runtime libs the
+        # -dev packages pull in. The apt ros-noetic-realsense2-* packages -- pinned
+        # to the EOL librealsense 2.50.0, which cannot stream a D455 on a Pi 5
+        # (-71 / uvc watchdog) -- remain deliberately NOT installed. git / wget /
         # curl are already above; do not duplicate them.
         cmake \
         build-essential \
@@ -141,54 +164,41 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# --- RealSense SDK + ROS 1 wrapper: built from source (issue #88) ---
-# The apt path pinned librealsense 2.50.0 (Noetic EOL), which cannot stream a
-# D455 on a Pi 5; self-built v2.55.1 streams it at ~30 fps. v2.55.1 is the
-# CEILING the ros1-legacy wrapper builds against (2.56+ pulls ROS 2 DDS
+# --- RealSense SDK (prebuilt) + ROS 1 wrapper (built here) --- (issue #88)
+# librealsense is now consumed as a PREBUILT GHCR image (the `rs_sdk` stage at
+# the top), not compiled here -- CI no longer pays the ~15-25 min librealsense
+# compile per run, only the ~5 min catkin wrapper build. The build itself lives
+# in .github/workflows/build-librealsense.yaml (built once; this repo is
+# terminal at v2.55.1). The apt path had pinned librealsense 2.50.0 (Noetic
+# EOL), which cannot stream a D455 on a Pi 5; v2.55.1 streams it at ~30 fps and
+# is the CEILING the ros1-legacy wrapper builds against (2.56+ pulls ROS 2 DDS
 # artifacts -- realsense-ros#3406). The wrapper is pinned to the 2.3.2 release
 # TAG (last ROS 1 release; a bare branch tip moves, a tag does not). This repo
 # is TERMINAL at this pair (ROS 1 / Noetic / ros1-legacy are all EOL): the pins
-# are --build-arg overridable but there is nothing newer to chase. Both ARGs sit
-# immediately before the clone+compile RUN so unrelated edits keep the buildx
-# cache for the (slow) source build.
-ARG LIBREALSENSE_VERSION="v2.55.1"
+# are --build-arg overridable but there is nothing newer to chase.
 ARG REALSENSE_ROS_VERSION="2.3.2"
 
-# Built in one RUN (the two ARGs above break RUN-adjacency with the apt layer,
-# so no DL3059). librealsense installs into the ROS prefix (mirrors the apt
-# layout: entrypoint/paths unchanged, catkin find_package(realsense2) resolves
-# it). devel keeps the full SDK tools (viewer + rs-*); a tools-pruned DESTDIR
-# copy is staged at /opt/rs-stage for the runtime COPY. FORCE_RSUSB_BACKEND=true
-# = userspace (no kernel module -- the whole point for the Pi). Python bindings
-# stay OFF (verified to fail: pybind11 cannot inherit PYTHON_EXECUTABLE). The
-# wrapper is built with catkin against the self-built SDK (sourcing setup.bash
-# puts the ROS prefix on CMAKE_PREFIX_PATH). `catkin_make install` installs into
-# the workspace install space (/tmp/rs_ws/install); we then copy ONLY the
-# package payload (lib/ + each package's share/ dir) into the ROS prefix (real,
-# devel) and into /opt/rs-stage (runtime), deliberately NOT catkin's generated
-# top-level setup.bash / _setup_util.py / env.sh, which would clobber the base
-# image's /opt/ros/noetic/setup.bash. (catkin has no per-package standalone
+# COPY the prebuilt SDK trees in BEFORE the wrapper build. The full SDK (viewer
+# + rs-* + gl) overlays the devel ROS prefix (mirrors the apt layout:
+# entrypoint/paths unchanged, catkin find_package(realsense2) resolves it); the
+# tools-pruned copy stages at /opt/rs-stage for the runtime COPY. The SDK was
+# built with FORCE_RSUSB_BACKEND=true (userspace, no kernel module -- the whole
+# point for the Pi) and no Python bindings (see the rs_sdk Dockerfile).
+COPY --from=rs_sdk /rs-full/opt/ros/${ROS_DISTRO} /opt/ros/${ROS_DISTRO}
+COPY --from=rs_sdk /rs-stage/opt/ros/${ROS_DISTRO} /opt/rs-stage/opt/ros/${ROS_DISTRO}
+
+# ldconfig registers the copied librealsense .so, then the ros1-legacy wrapper
+# is built with catkin against the SDK (sourcing setup.bash puts the ROS prefix
+# on CMAKE_PREFIX_PATH). `catkin_make install` installs into the workspace
+# install space (/tmp/rs_ws/install); we then copy ONLY the package payload
+# (lib/ + each package's share/ dir) into the ROS prefix (real, devel) and into
+# /opt/rs-stage (runtime), deliberately NOT catkin's generated top-level
+# setup.bash / _setup_util.py / env.sh, which would clobber the base image's
+# /opt/ros/noetic/setup.bash. (catkin has no per-package standalone
 # `cmake --install` -- that is a colcon/ament pattern.) rosdep
-# --skip-keys=librealsense2 must NOT apt-install the SDK we built.
+# --skip-keys=librealsense2 must NOT apt-install the SDK we already COPYed in.
 # hadolint ignore=DL3003
-RUN git clone --depth 1 --branch "${LIBREALSENSE_VERSION}" \
-        https://github.com/IntelRealSense/librealsense.git /tmp/librealsense && \
-    cmake -S /tmp/librealsense -B /tmp/librealsense/build \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX="/opt/ros/${ROS_DISTRO}" \
-        -DFORCE_RSUSB_BACKEND=true \
-        -DBUILD_WITH_DDS=OFF \
-        -DCHECK_FOR_UPDATES=OFF \
-        -DBUILD_PYTHON_BINDINGS=false \
-        -DBUILD_WITH_CUDA=false \
-        -DBUILD_EXAMPLES=true \
-        -DBUILD_GRAPHICAL_EXAMPLES=true && \
-    cmake --build /tmp/librealsense/build -j"$(nproc)" && \
-    cmake --install /tmp/librealsense/build && \
-    DESTDIR=/opt/rs-stage cmake --install /tmp/librealsense/build && \
-    rm -f "/opt/rs-stage/opt/ros/${ROS_DISTRO}/bin/realsense-viewer" && \
-    rm -f /opt/rs-stage/opt/ros/"${ROS_DISTRO}"/bin/rs-* && \
-    rm -f /opt/rs-stage/opt/ros/"${ROS_DISTRO}"/lib/librealsense2-gl.so* && \
+RUN ldconfig && \
     mkdir -p /tmp/rs_ws/src && \
     git clone --depth 1 --branch "${REALSENSE_ROS_VERSION}" \
         https://github.com/IntelRealSense/realsense-ros.git \
@@ -206,7 +216,7 @@ RUN git clone --depth 1 --branch "${LIBREALSENSE_VERSION}" \
         cp -a /tmp/rs_ws/install/share/realsense2_camera "${tree}/share/" && \
         cp -a /tmp/rs_ws/install/share/realsense2_description "${tree}/share/"; \
     done && \
-    rm -rf /tmp/librealsense /tmp/rs_ws
+    rm -rf /tmp/rs_ws
 
 ############################## devel ##############################
 FROM devel-base AS devel

@@ -38,6 +38,17 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   deferred to the base `init` toggle.
 
 ### Changed
+- librealsense is now consumed as a **prebuilt GHCR image** instead of being
+  compiled on every build (option B). The SDK (v2.55.1) is built ONCE by the new
+  `.github/workflows/build-librealsense.yaml` multi-arch workflow and published
+  to `ghcr.io/ycpss91255-docker/librealsense:noetic-v2.55.1`; the main Dockerfile
+  adds an `rs_sdk` stage that `FROM`s that image and `COPY`s the pre-built SDK
+  trees (`/rs-full` for `devel`, `/rs-stage` for `runtime`) into the wrapper
+  build. CI no longer pays the ~15-25 min librealsense compile per run -- only
+  the ~5 min catkin wrapper build (which must still compile against the SDK)
+  remains inline. The wrapper build, runtime overlay, entrypoint, and CMD are
+  unchanged. Since ROS 1 is terminal at v2.55.1, the SDK image is built once and
+  never changes.
 - The `runtime` image now launches with `initial_reset:=true` by default (#93):
   on the RSUSB userspace backend, a D455 cold-start on arm64 (Pi 5) could wedge
   the first stream-open (`RS2_USB_STATUS_IO`, topics stuck at 0 Hz); resetting
@@ -45,10 +56,14 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   only (so `devel` is unaffected), and the arg is overridable.
 - Build the RealSense stack from source instead of apt (#88). librealsense
   **v2.55.1** (SDK) and the ros1-legacy **realsense-ros 2.3.2** wrapper are now
-  compiled in the `devel` stage and installed into `/opt/ros/noetic` (mirroring
-  the apt layout, so the entrypoint and paths are unchanged); `runtime` gets
-  them via `COPY --from=devel` of a `DESTDIR` staging tree (SDK bin tools
-  pruned) plus an online `rosdep` pass for the wrapper's exec-only ROS deps. The
+  built from source and installed into `/opt/ros/noetic` (mirroring the apt
+  layout, so the entrypoint and paths are unchanged) rather than pulled from
+  apt. librealsense is no longer compiled inline -- it is now consumed as a
+  prebuilt GHCR image (see the prebuilt-GHCR entry above); only the ros1-legacy
+  **realsense-ros 2.3.2** catkin wrapper still compiles in the `devel` stage
+  (it must build against the SDK). `runtime` gets both via `COPY --from=devel`
+  of a `DESTDIR` staging tree (SDK bin tools pruned) plus an online `rosdep`
+  pass for the wrapper's exec-only ROS deps. The
   apt `ros-noetic-realsense2-camera` / `ros-noetic-realsense2-description` were
   removed from both `devel` and `runtime`; `realsense2_description` is now built
   from the realsense-ros repo. The apt path pinned librealsense **2.50.0**
