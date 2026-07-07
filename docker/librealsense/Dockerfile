@@ -74,3 +74,64 @@ RUN git clone --depth 1 --branch "${LIBREALSENSE_VERSION}" \
     rm -f /rs-stage/opt/ros/"${ROS_DISTRO}"/bin/rs-* && \
     rm -f /rs-stage/opt/ros/"${ROS_DISTRO}"/lib/librealsense2-gl.so* && \
     rm -rf /tmp/librealsense
+
+############################## test (publish gate) ##############################
+# Publish-time smoke gate. A librealsense SDK image that fails these asserts
+# must never be pushed, so this stage IS the correctness contract of the two
+# DESTDIR trees the consumer COPYs. The publish workflow builds `--target test`
+# (push=false) BEFORE it pushes the `export` image; see
+# .github/workflows/build-librealsense.yaml. Written PIPE-FREE (bash `case` on a
+# captured ldd string + `find -print -quit` guards, no `| grep`): the inherited
+# SHELL/pipefail is NOT tracked across this FROM boundary, so a pipe would trip
+# hadolint DL4006.
+FROM build AS test
+
+ARG ROS_DISTRO
+
+# `set -eux`: any failed assert aborts the build (non-zero RUN) -> the gate
+# blocks the push. Each check maps to a property the consumer relies on.
+RUN set -eux; \
+    lib_full="/rs-full/opt/ros/${ROS_DISTRO}/lib"; \
+    lib_stage="/rs-stage/opt/ros/${ROS_DISTRO}/lib"; \
+    bin_stage="/rs-stage/opt/ros/${ROS_DISTRO}/bin"; \
+    # (1) Both DESTDIR trees exist with a populated lib dir under the ROS prefix.
+    test -d "${lib_full}"; \
+    test -d "${lib_stage}"; \
+    # (2) The core SDK shared object is present in the full tree ...
+    test -f "${lib_full}/librealsense2.so"; \
+    # ... and every one of its shared-library deps resolves (no "not found").
+    ldd_out="$(ldd "${lib_full}/librealsense2.so" 2>&1)"; \
+    echo "${ldd_out}"; \
+    case "${ldd_out}" in \
+        *"not found"*) \
+            echo "SDK TEST FAIL: unresolved shared library in librealsense2.so" >&2; \
+            exit 1 ;; \
+    esac; \
+    # (3) The versioned soname (librealsense2.so.<major.minor>) is present.
+    soname="$(find "${lib_full}" -maxdepth 1 -name 'librealsense2.so.*' -print -quit)"; \
+    test -n "${soname}"; \
+    # (4) /rs-stage is the runtime-pruned tree: NO GUI viewer, NO rs-* example
+    # binaries, NO GL helper library (all only belong in the devel overlay).
+    test ! -e "${bin_stage}/realsense-viewer"; \
+    leaked_rs="$(find "${bin_stage}" -maxdepth 1 -name 'rs-*' -print -quit 2>/dev/null || true)"; \
+    if [ -n "${leaked_rs}" ]; then \
+        echo "SDK TEST FAIL: rs-* example tools leaked into /rs-stage" >&2; \
+        exit 1; \
+    fi; \
+    leaked_gl="$(find "${lib_stage}" -maxdepth 1 -name 'librealsense2-gl.so*' -print -quit 2>/dev/null || true)"; \
+    if [ -n "${leaked_gl}" ]; then \
+        echo "SDK TEST FAIL: librealsense2-gl leaked into /rs-stage" >&2; \
+        exit 1; \
+    fi; \
+    echo "SDK TEST OK: /rs-full + /rs-stage trees validated"
+
+############################## export (published image) ##############################
+# The PUBLISHED image is literally just the two librealsense DESTDIR trees on
+# `scratch`. The consumer only ever COPYs /rs-full and /rs-stage out of this
+# image, so shipping the ros-base + build toolchain underneath was dead weight;
+# this mirrors base's test-tools image being a clean COPY-source. Built with
+# `--target export` on the build-and-push step of the publish workflow.
+FROM scratch AS export
+
+COPY --from=build /rs-full /rs-full
+COPY --from=build /rs-stage /rs-stage
