@@ -355,7 +355,10 @@ graph TD
 
 ```text
 realsense_ros1/
-├── Dockerfile                   # 多阶段构建
+├── Dockerfile                   # 多阶段构建（FROM 预构建的 librealsense SDK 镜像）
+├── docker/
+│   └── librealsense/
+│       └── Dockerfile           # 预构建 librealsense SDK 来源（构建一次，发布到 GHCR）
 ├── LICENSE
 ├── README.md
 ├── justfile -> .base/script/docker/justfile        # 符号链接（用户入口）
@@ -391,7 +394,8 @@ realsense_ros1/
 │   └── test/
 │       └── TEST.md              # 构建期自动 smoke 测试
 ├── .github/workflows/
-│   └── main.yaml                # CI（调用 base 可复用的 build/release worker）
+│   ├── main.yaml                # CI（调用 base 可复用的 build/release worker）
+│   └── build-librealsense.yaml  # 发布预构建 librealsense SDK 镜像到 GHCR
 └── test/
     └── smoke/                   # 仓库自有的 bats 测试
         ├── ros_env.bats
