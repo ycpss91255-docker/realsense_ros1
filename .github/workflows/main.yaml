@@ -11,6 +11,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
 
   call-docker-build:
@@ -30,6 +34,7 @@ jobs:
     uses: ycpss91255-docker/base/.github/workflows/build-worker.yaml@v0.41.0
     with:
       image_name: realsense_ros1
+      cache_variant: ${{ matrix.target.name }}
       platforms: linux/amd64,linux/arm64
       test_tools_version: v0.41.0
       build_args: |
