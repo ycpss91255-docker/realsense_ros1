@@ -1,3 +1,5 @@
+**[English](CAMERA.md)** | **[繁體中文](CAMERA.zh-TW.md)** | **[简体中文](CAMERA.zh-CN.md)** | **[日本語](CAMERA.ja.md)**
+
 # Testing with a physical RealSense camera
 
 `TEST.md` covers the automatic build-time smoke tests. This page is the manual
