@@ -22,7 +22,7 @@ ARG TEST_TOOLS_IMAGE="test-tools:local"
 # Prebuilt librealsense SDK image. Resolves to `librealsense:local` for the
 # local `just build` flow (the pre-build hook script/hooks/pre/build.sh
 # auto-builds it from docker/librealsense/Dockerfile when LIBREALSENSE_IMAGE is
-# unset) or to the multi-arch ghcr.io/ycpss91255-docker/librealsense:noetic-v2.55.1
+# unset) or to the multi-arch ghcr.io/ycpss91255-docker/librealsense:v2.55.1-focal
 # in CI (injected via build_args, so the FROM below pulls the prebuilt image
 # instead of recompiling librealsense). Same dual-source pattern as
 # TEST_TOOLS_IMAGE above; see the sibling app/realsense_ros2 for the same setup.
@@ -186,14 +186,15 @@ RUN apt-get update && \
 # are --build-arg overridable but there is nothing newer to chase.
 ARG REALSENSE_ROS_VERSION="2.3.2"
 
-# COPY the prebuilt SDK trees in BEFORE the wrapper build. The full SDK (viewer
-# + rs-* + gl) overlays the devel ROS prefix (mirrors the apt layout:
-# entrypoint/paths unchanged, catkin find_package(realsense2) resolves it); the
-# tools-pruned copy stages at /opt/rs-stage for the runtime COPY. The SDK was
-# built with FORCE_RSUSB_BACKEND=true (userspace, no kernel module -- the whole
-# point for the Pi) and no Python bindings (see the rs_sdk Dockerfile).
-COPY --from=rs_sdk /rs-full/opt/ros/${ROS_DISTRO} /opt/ros/${ROS_DISTRO}
-COPY --from=rs_sdk /rs-stage/opt/ros/${ROS_DISTRO} /opt/rs-stage/opt/ros/${ROS_DISTRO}
+# COPY the prebuilt SDK trees in BEFORE the wrapper build. librealsense is
+# ROS-agnostic, so the full SDK (viewer + rs-* + gl) installs into /usr/local
+# (ldconfig below + catkin find_package(realsense2) resolve it from there); the
+# tools-pruned copy stages at /opt/rs-stage/usr/local for the runtime COPY. The
+# catkin wrapper itself still builds into /opt/ros/${ROS_DISTRO} below. The SDK
+# was built with FORCE_RSUSB_BACKEND=true (userspace, no kernel module -- the
+# whole point for the Pi) and no Python bindings (see the rs_sdk Dockerfile).
+COPY --from=rs_sdk /rs-full/usr/local /usr/local
+COPY --from=rs_sdk /rs-stage/usr/local /opt/rs-stage/usr/local
 
 # ldconfig registers the copied librealsense .so, then the ros1-legacy wrapper
 # is built with catkin against the SDK (sourcing setup.bash puts the ROS prefix
@@ -371,17 +372,22 @@ RUN apt-get update && \
     printf 'source /opt/ros/%s/setup.bash\n' "${ROS_DISTRO}" >> /etc/bash.bashrc
 
 # Self-built RealSense SDK + ros1-legacy wrapper (built in devel, issue #88).
-# Overlays /opt/ros/${ROS_DISTRO}/{lib,share,include} with the SDK libs + the two
-# wrapper packages (realsense2_camera, realsense2_description) + their
-# package.xml. Deliberately does NOT touch /opt/ros/${ROS_DISTRO}/setup.bash (the
-# DESTDIR stage carries no catkin top-level setup.*), so the base ROS env is
-# intact. The SDK bin tools (viewer / rs-*) were pruned from the stage -- runtime
-# is node-only. libusb-1.0-0 (installed above) is what the RSUSB userspace
-# backend links (libusb-1.0.so.0).
+# The staged /opt/rs-stage tree carries BOTH subtrees: the librealsense SDK libs
+# under usr/local (ROS-agnostic) and the two wrapper packages (realsense2_camera,
+# realsense2_description) + their package.xml under opt/ros/${ROS_DISTRO}.
+# Copying it to / lands the SDK in /usr/local and the wrapper in
+# /opt/ros/${ROS_DISTRO}/{lib,share} in one shot. Deliberately does NOT touch
+# /opt/ros/${ROS_DISTRO}/setup.bash (the DESTDIR stage carries no catkin
+# top-level setup.*), so the base ROS env is intact. The SDK bin tools (viewer /
+# rs-*) were pruned from the stage -- runtime is node-only. libusb-1.0-0
+# (installed above) is what the RSUSB userspace backend links (libusb-1.0.so.0).
 COPY --from=devel /opt/rs-stage/ /
 
-# Copy RealSense udev rules
-RUN mkdir -p /etc/udev/rules.d
+# ldconfig registers the SDK's librealsense2.so.* now living in /usr/local/lib
+# (Ubuntu's /etc/ld.so.conf.d/libc.conf lists it) so the wrapper resolves it at
+# runtime; folded with the udev-rules mkdir to avoid a consecutive-RUN lint.
+RUN ldconfig && \
+    mkdir -p /etc/udev/rules.d
 COPY --chmod=0644 config/realsense/99-realsense-libusb.rules /etc/udev/rules.d/
 
 COPY --chmod=0755 script/entrypoint.sh /entrypoint.sh
@@ -410,8 +416,10 @@ CMD ["roslaunch", "realsense2_camera", "rs_aligned_depth.launch", "initial_reset
 #
 # ROS 1 (catkin) installs the nodelet libs directly under
 # /opt/ros/${ROS_DISTRO}/lib/ as librealsense2_camera.so -- there is NO
-# per-package lib/<pkg>/ subdir (that is the ROS 2 / ament layout). So match
-# the librealsense2*.so* files at the top of lib/, not a realsense2_camera/ dir.
+# per-package lib/<pkg>/ subdir (that is the ROS 2 / ament layout). The
+# librealsense SDK .so now lives in /usr/local/lib (ROS-agnostic), so scan BOTH
+# dirs for librealsense2*.so* -- this ldd-checks the wrapper nodelet AND the SDK
+# library it links against.
 #
 # `bash -c` (not `sh -c`): the command sources ROS setup.bash and uses a
 # bash for-loop. The inner bash runs without the outer SHELL's
@@ -422,7 +430,7 @@ ARG RUNTIME_SMOKE_CMD='whoami && bash --version && \
   source /opt/ros/${ROS_DISTRO}/setup.bash && \
   { rospack find realsense2_camera || \
     { echo "RUNTIME SMOKE FAIL: realsense2_camera not on ROS_PACKAGE_PATH"; exit 1; }; } && \
-  libs="$(find "/opt/ros/${ROS_DISTRO}/lib" -maxdepth 1 -name "librealsense2*.so*")" && \
+  libs="$(find "/opt/ros/${ROS_DISTRO}/lib" "/usr/local/lib" -maxdepth 1 -name "librealsense2*.so*")" && \
   test -n "${libs}" && \
   for f in ${libs}; do \
     echo "--- ldd: ${f} ---"; ldd "${f}" || true; \

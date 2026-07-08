@@ -13,7 +13,7 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `librealsense:local` from `docker/librealsense/Dockerfile` before the main
   build, mirroring how `build.sh` auto-builds `test-tools:local`. The local
   build is now self-contained -- no GHCR pull needed. If `LIBREALSENSE_IMAGE`
-  is already set (CI passes the `noetic-v2.55.1` GHCR tag) the hook is a no-op.
+  is already set (CI passes the `v2.55.1-focal` GHCR tag) the hook is a no-op.
 - `docker/librealsense/Dockerfile` gains a `test` stage (publish-time smoke
   GATE: asserts the `/rs-full` + `/rs-stage` trees exist, `librealsense2.so` is
   present and fully linkable with no `not found`, the versioned soname is
@@ -51,12 +51,24 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   deferred to the base `init` toggle.
 
 ### Changed
+- The prebuilt `librealsense` SDK image is ROS-agnostic and keyed on the Ubuntu
+  platform, not the ROS distro. It builds on `ubuntu:focal` (was
+  `ros:noetic-ros-base`) and installs into the `/usr/local` prefix (was
+  `/opt/ros/noetic`); the consumer COPYs it to `/usr/local` and runs `ldconfig`,
+  while the catkin wrapper still lands in `/opt/ros/noetic`. Its image tag is
+  `v2.55.1-focal` rather than `noetic-v2.55.1`, since librealsense2 is a pure
+  C++ library whose `.so` is ABI-bound to the Ubuntu release's glibc/libstdc++,
+  not to ROS. The leaner `ubuntu` base also needs two things `ros-base` provided
+  for free: `ca-certificates` (installed explicitly, for the https SDK clone)
+  and `DEBIAN_FRONTEND=noninteractive` on the apt install (the GTK/GL deps pull
+  in `tzdata`, which would otherwise prompt interactively and hang the TTY-less
+  build).
 - The main Dockerfile's `rs_sdk` source is now parameterized via a global
   `ARG LIBREALSENSE_IMAGE="librealsense:local"` + `FROM ${LIBREALSENSE_IMAGE}`,
   mirroring base's `TEST_TOOLS_IMAGE` dual-source pattern. Local builds FROM
   `librealsense:local` (built by the new `script/hooks/pre/build.sh` pre-build
   hook, no GHCR needed -> self-contained), while `main.yaml` passes
-  `LIBREALSENSE_IMAGE=ghcr.io/ycpss91255-docker/librealsense:noetic-v2.55.1`
+  `LIBREALSENSE_IMAGE=ghcr.io/ycpss91255-docker/librealsense:v2.55.1-focal`
   through `build_args` so CI PULLS the prebuilt SDK. The wrapper build, runtime
   overlay, entrypoint, and CMD are unchanged.
 - The published `librealsense` SDK image is now the slim `scratch`-based
@@ -68,7 +80,7 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - librealsense is now consumed as a **prebuilt GHCR image** instead of being
   compiled on every build (option B). The SDK (v2.55.1) is built ONCE by the new
   `.github/workflows/build-librealsense.yaml` multi-arch workflow and published
-  to `ghcr.io/ycpss91255-docker/librealsense:noetic-v2.55.1`; the main Dockerfile
+  to `ghcr.io/ycpss91255-docker/librealsense:v2.55.1-focal`; the main Dockerfile
   adds an `rs_sdk` stage that `FROM`s that image and `COPY`s the pre-built SDK
   trees (`/rs-full` for `devel`, `/rs-stage` for `runtime`) into the wrapper
   build. CI no longer pays the ~15-25 min librealsense compile per run -- only
