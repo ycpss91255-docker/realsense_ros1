@@ -376,13 +376,18 @@ realsense_ros1/
 │   ├── setup.sh -> ../.base/script/docker/wrapper/setup.sh   # symlink
 │   ├── setup_tui.sh -> ../.base/script/docker/wrapper/setup_tui.sh  # symlink
 │   └── hooks/                   # pre/ + post/ wrapper hooks
+├── camera.yaml -> config/realsense/custom/none.yaml  # symlink（作用中的相機設定檔；預設為 stock）
 ├── config/
 │   ├── docker/
 │   │   └── setup.conf           # 設定介面（.env/compose.yaml 由此產生）
 │   ├── shell/
 │   │   └── bashrc.d/10-ros-source.sh  # 為互動式 shell source ROS
 │   └── realsense/
-│       └── 99-realsense-libusb.rules  # RealSense udev 規則
+│       ├── README.md            # 說明：ROS 1 上游不附 config YAML（無 drift-check）
+│       ├── 99-realsense-libusb.rules  # RealSense udev 規則
+│       └── custom/              # 我們的相機設定檔（ROS 1 參數格式）
+│           ├── none.yaml        # 空檔 = stock 上游預設（預設）
+│           └── usb2.yaml        # USB 2 備援（640x480@15 + depth 480x270@15）
 ├── doc/
 │   ├── README.zh-TW.md          # 繁體中文
 │   ├── README.zh-CN.md          # 簡體中文

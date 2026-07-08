@@ -392,13 +392,18 @@ realsense_ros1/
 │   ├── setup.sh -> ../.base/script/docker/wrapper/setup.sh   # シンボリックリンク
 │   ├── setup_tui.sh -> ../.base/script/docker/wrapper/setup_tui.sh  # シンボリックリンク
 │   └── hooks/                   # pre/ + post/ ラッパーフック
+├── camera.yaml -> config/realsense/custom/none.yaml  # symlink（有効なカメラ設定; デフォルトは stock）
 ├── config/
 │   ├── docker/
 │   │   └── setup.conf           # 設定サーフェス（.env/compose.yaml はここから生成）
 │   ├── shell/
 │   │   └── bashrc.d/10-ros-source.sh  # インタラクティブシェル向けに ROS を source
 │   └── realsense/
-│       └── 99-realsense-libusb.rules  # RealSense udev ルール
+│       ├── README.md            # 注記: ROS 1 は上流に config YAML なし（drift-check なし）
+│       ├── 99-realsense-libusb.rules  # RealSense udev ルール
+│       └── custom/              # 独自のカメラ設定（ROS 1 パラメータ形式）
+│           ├── none.yaml        # 空 = stock 上流デフォルト（デフォルト）
+│           └── usb2.yaml        # USB 2 フォールバック（640x480@15 + depth 480x270@15）
 ├── doc/
 │   ├── README.zh-TW.md          # 繁体字中国語
 │   ├── README.zh-CN.md          # 簡体字中国語

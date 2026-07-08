@@ -1,6 +1,6 @@
 # TEST.md
 
-**78 tests** total.
+**83 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -100,6 +100,18 @@
 | `check_udev_rules_sync.sh --help exits 0` | Help exits successfully |
 | `check_udev_rules_sync.sh -h prints usage` | Help output contains "Usage:" |
 | `check_udev_rules_sync.sh is executable` | Drift-guard script carries the executable bit |
+
+## test/smoke/camera_config.bats
+
+### Camera config wiring (5)
+
+| Test | Description |
+|------|-------------|
+| `camera config is baked into the image` | `/camera_config.yaml` exists (baked from the `camera.yaml` symlink target) |
+| `default baked camera config is empty (stock upstream defaults)` | Default `none.yaml` is 0 bytes, so the stock CMD streams the upstream defaults |
+| `entrypoint leaves the stock CMD unchanged for an empty config` | `_apply_camera_config` keeps the original argv when `/camera_config.yaml` is empty |
+| `entrypoint rewrites roslaunch argv from a non-empty camera config` | A non-empty config becomes `rs_aligned_depth.launch` `key:=value` args (`color_width:=640`, ...) with `initial_reset:=true` |
+| `entrypoint does not hijack a non-roslaunch command even with a config` | Non-`roslaunch` command (devel `bash`) is left unchanged even when a profile is baked |
 
 ## .base/test/smoke/script_help.bats
 
