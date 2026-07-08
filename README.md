@@ -408,13 +408,18 @@ realsense_ros1/
 │   ├── setup.sh -> ../.base/script/docker/wrapper/setup.sh   # symlink
 │   ├── setup_tui.sh -> ../.base/script/docker/wrapper/setup_tui.sh  # symlink
 │   └── hooks/                   # pre/ + post/ wrapper hooks
+├── camera.yaml -> config/realsense/custom/none.yaml  # symlink (active camera profile; default = stock)
 ├── config/
 │   ├── docker/
 │   │   └── setup.conf           # configuration surface (.env/compose.yaml generated from this)
 │   ├── shell/
 │   │   └── bashrc.d/10-ros-source.sh  # source ROS for interactive shells
 │   └── realsense/
-│       └── 99-realsense-libusb.rules  # RealSense udev rules
+│       ├── README.md            # note: ROS 1 ships no config YAML upstream (no drift-check)
+│       ├── 99-realsense-libusb.rules  # RealSense udev rules
+│       └── custom/              # our camera profiles (ROS 1 param form)
+│           ├── none.yaml        # EMPTY = stock upstream defaults (default)
+│           └── usb2.yaml        # USB 2 fallback (640x480@15 + depth 480x270@15)
 ├── doc/
 │   ├── README.zh-TW.md          # Traditional Chinese
 │   ├── README.zh-CN.md          # Simplified Chinese

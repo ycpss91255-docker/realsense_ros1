@@ -8,6 +8,25 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Selectable camera config, modeled on the `app/ros1_bridge` `bridge.yaml`
+  pattern. A repo-root `camera.yaml` symlink selects the active profile;
+  `config/realsense/custom/` holds our profiles (`none.yaml`, an EMPTY 0-byte
+  marker = stock upstream defaults 640x480x30, is the default target; and
+  `usb2.yaml` = color 640x480@15 + depth 480x270@15, aligned depth on, IR/IMU
+  off for a USB 2 link). The Dockerfile bakes the symlink target into the image
+  as `/camera_config.yaml` via `ARG CAMERA_CONFIG="camera.yaml"` +
+  `COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml` (devel + runtime
+  stages). When that file is non-empty and the command is the RealSense
+  `roslaunch`, `script/entrypoint.sh` translates the flat YAML into
+  `rs_aligned_depth.launch` `key:=value` roslaunch args (ROS 1 realsense-ros
+  2.3.2 sets each stream param via `<param value="$(arg ...)"/>`, so a plain
+  `rosparam load` would be overridden -- args are the reliable channel) while
+  keeping `initial_reset:=true`. Default behaviour (empty `none.yaml`) is
+  byte-identical to before; activate a profile by repointing the symlink or
+  `--build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml`. Unlike the
+  ROS 2 sibling there is NO official config to vendor / drift-check: ROS 1
+  realsense-ros ships no config YAML (only launch args), noted in
+  `config/realsense/README.md`.
 - `script/hooks/pre/build.sh` (base #440 pre-build hook): for a local
   `just build` / `./build.sh` (with `LIBREALSENSE_IMAGE` unset) it auto-builds
   `librealsense:local` from `docker/librealsense/Dockerfile` before the main

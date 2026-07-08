@@ -240,6 +240,15 @@ ARG SETUP_DIR="/tmp/setup"
 ARG CONFIG_SRC="config"
 
 COPY --chmod=0755 "./${ENTRYPOINT_FILE}" "/entrypoint.sh"
+
+# Baked-in camera profile. CAMERA_CONFIG points at the repo-root `camera.yaml`
+# symlink (default target config/realsense/custom/none.yaml, EMPTY = stock
+# upstream defaults); Docker COPY follows the symlink and bakes its TARGET's
+# content into /camera_config.yaml. The entrypoint applies it only when
+# non-empty, so the default devel image is unchanged. Override to bake a
+# profile: --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml.
+ARG CAMERA_CONFIG="camera.yaml"
+COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml
 COPY --chown="${USER}":"${GROUP}" --chmod=0755 .base/config "${CONFIG_DIR}"
 COPY --chown="${USER}":"${GROUP}" --chmod=0755 "${CONFIG_SRC}" "${CONFIG_DIR}"
 
@@ -391,6 +400,13 @@ RUN ldconfig && \
 COPY --chmod=0644 config/realsense/99-realsense-libusb.rules /etc/udev/rules.d/
 
 COPY --chmod=0755 script/entrypoint.sh /entrypoint.sh
+
+# Baked-in camera profile (see the devel stage for the full rationale). Default
+# CAMERA_CONFIG=camera.yaml -> empty none.yaml -> the stock CMD below streams the
+# upstream defaults; --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml
+# bakes a profile the entrypoint then applies to rs_aligned_depth.launch.
+ARG CAMERA_CONFIG="camera.yaml"
+COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml
 
 USER "${USER}"
 WORKDIR "${HOME}/work"
