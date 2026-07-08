@@ -41,7 +41,7 @@
 | Test | Description |
 |------|-------------|
 | `realsense2_camera discoverable via rospack` | Source-built wrapper (#88) is on `ROS_PACKAGE_PATH` (`rospack find realsense2_camera`) |
-| `librealsense2 SDK library present` | Self-built librealsense v2.55.1 landed at `/opt/ros/${ROS_DISTRO}/lib/librealsense2.so*` |
+| `librealsense2 SDK library present` | Self-built librealsense v2.55.1 landed at `/usr/local/lib/librealsense2.so*` (ROS-agnostic SDK) |
 
 ### Desktop GUI (devel) (1)
 

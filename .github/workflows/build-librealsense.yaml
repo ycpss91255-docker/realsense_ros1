@@ -9,11 +9,13 @@ name: Build librealsense SDK image
 # Per-arch NATIVE builds (linux/amd64 -> ubuntu-latest, linux/arm64 ->
 # ubuntu-24.04-arm) mirror base's build-worker: no QEMU emulation. Each shard
 # pushes an image by DIGEST, then a merge job assembles the multi-arch manifest
-# under the tag noetic-${LIBREALSENSE_VERSION}.
+# under the tag ${LIBREALSENSE_VERSION}-focal. librealsense2 is a pure C++ SDK
+# whose .so is ABI-bound to the Ubuntu release (not ROS), so the image is keyed
+# on the Ubuntu codename (focal, for Noetic), not the ROS distro.
 #
 # ONE-TIME OPERATIONAL PREREQUISITE (blocks the main CI build otherwise):
 # GHCR packages first published via GITHUB_TOKEN are PRIVATE by default, and
-# the main Dockerfile's `FROM ghcr.io/.../librealsense:noetic-v2.55.1` is pulled
+# the main Dockerfile's `FROM ghcr.io/.../librealsense:v2.55.1-focal` is pulled
 # ANONYMOUSLY in CI (same as the base test-tools image). So the FIRST run of
 # this workflow must complete AND the librealsense package must be flipped to
 # PUBLIC (repo/org Packages -> librealsense -> Package settings -> Change
@@ -39,7 +41,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE: ghcr.io/ycpss91255-docker/librealsense
-  ROS_DISTRO: noetic
+  UBUNTU_CODENAME: focal
   LIBREALSENSE_VERSION: v2.55.1
 
 jobs:
@@ -69,7 +71,7 @@ jobs:
           set -euo pipefail
           platform="${{ matrix.platform }}"
           echo "arch=${platform#linux/}" >> "${GITHUB_OUTPUT}"
-          echo "version=${ROS_DISTRO}-${LIBREALSENSE_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "version=${LIBREALSENSE_VERSION}-${UBUNTU_CODENAME}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -94,7 +96,7 @@ jobs:
           target: test
           push: false
           build-args: |
-            ROS_DISTRO=${{ env.ROS_DISTRO }}
+            UBUNTU_CODENAME=${{ env.UBUNTU_CODENAME }}
             LIBREALSENSE_VERSION=${{ env.LIBREALSENSE_VERSION }}
           cache-from: type=gha,scope=librealsense-${{ steps.vars.outputs.arch }}
           cache-to: type=gha,scope=librealsense-${{ steps.vars.outputs.arch }},mode=max
@@ -110,7 +112,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           target: export
           build-args: |
-            ROS_DISTRO=${{ env.ROS_DISTRO }}
+            UBUNTU_CODENAME=${{ env.UBUNTU_CODENAME }}
             LIBREALSENSE_VERSION=${{ env.LIBREALSENSE_VERSION }}
           cache-from: type=gha,scope=librealsense-${{ steps.vars.outputs.arch }}
           cache-to: type=gha,scope=librealsense-${{ steps.vars.outputs.arch }},mode=max
@@ -133,7 +135,7 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────
   # Merge the per-arch digests into a single multi-arch manifest tagged
-  # noetic-${LIBREALSENSE_VERSION} (e.g. noetic-v2.55.1).
+  # ${LIBREALSENSE_VERSION}-focal (e.g. v2.55.1-focal).
   # ────────────────────────────────────────────────────────────────
   merge:
     needs: build
@@ -160,7 +162,7 @@ jobs:
         working-directory: /tmp/digests
         run: |
           set -euo pipefail
-          tag="${IMAGE}:${ROS_DISTRO}-${LIBREALSENSE_VERSION}"
+          tag="${IMAGE}:${LIBREALSENSE_VERSION}-${UBUNTU_CODENAME}"
           # shellcheck disable=SC2046
           docker buildx imagetools create -t "${tag}" \
             $(printf "${IMAGE}@sha256:%s " *)
@@ -168,4 +170,4 @@ jobs:
       - name: Inspect manifest
         run: |
           set -euo pipefail
-          docker buildx imagetools inspect "${IMAGE}:${ROS_DISTRO}-${LIBREALSENSE_VERSION}"
+          docker buildx imagetools inspect "${IMAGE}:${LIBREALSENSE_VERSION}-${UBUNTU_CODENAME}"

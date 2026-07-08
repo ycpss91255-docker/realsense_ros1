@@ -133,8 +133,9 @@ setup() {
 # -------------------- RealSense packages (source-built, #88) --------------------
 # The apt ros-${ROS_DISTRO}-realsense2-* packages were removed; librealsense
 # v2.55.1 (SDK) + the ros1-legacy realsense-ros 2.3.2 wrapper are built from
-# source and real-installed into /opt/ros/${ROS_DISTRO} (devel). Assert the
-# wrapper is on ROS_PACKAGE_PATH and the SDK library landed in the ROS tree.
+# source (devel). The wrapper real-installs into /opt/ros/${ROS_DISTRO}; the
+# ROS-agnostic SDK installs into /usr/local. Assert the wrapper is on
+# ROS_PACKAGE_PATH and the SDK library landed in /usr/local.
 
 @test "realsense2_camera discoverable via rospack" {
     run bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && rospack find realsense2_camera"
@@ -142,7 +143,7 @@ setup() {
 }
 
 @test "librealsense2 SDK library present" {
-    run bash -c "ls /opt/ros/${ROS_DISTRO}/lib/librealsense2.so*"
+    run bash -c "ls /usr/local/lib/librealsense2.so*"
     assert_success
 }
 
