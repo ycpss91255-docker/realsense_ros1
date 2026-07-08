@@ -1,0 +1,47 @@
+name: GHCR librealsense cleanup
+
+# Deletes untagged ORPHAN digests from the realsense_ros1-owned `librealsense`
+# GHCR package. build-librealsense.yaml (here and in realsense_ros2) publishes
+# the multi-arch SDK push-by-digest, which accumulates untagged versions over
+# time. This centralizes cleanup in the package OWNER repo so one workflow
+# covers every tag; running a copy in each publisher would double-clean/race.
+#
+# dataaxiom/ghcr-cleanup-action is MULTI-ARCH AWARE: the amd64/arm64 child
+# manifests referenced by a live tagged index (v2.55.1-focal / v2.58.2-jammy /
+# v2.58.2-noble) are NOT untagged orphans and are preserved. Only truly-orphaned
+# untagged digests older than the window are removed -- so live tags never 404.
+# (This is exactly why we do NOT use actions/delete-package-versions with
+# delete-only-untagged-versions, which deletes tag-referenced children.)
+#
+# See issue #102. Recommended first step: run once via workflow_dispatch with
+# dry-run=true and review the "would delete" list before the weekly schedule
+# starts deleting for real.
+
+on:
+  schedule:
+    - cron: "0 3 * * 0" # weekly, Sunday 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Log what would be deleted without deleting"
+        type: boolean
+        default: true
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      # Scheduled runs delete for real; manual (workflow_dispatch) runs default
+      # to dry-run so you can review the keep/delete set safely first.
+      - name: Clean up untagged librealsense orphans
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          owner: ycpss91255-docker
+          package: librealsense
+          delete-untagged: true
+          older-than: 7 days
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run || false }}
+          token: ${{ secrets.GITHUB_TOKEN }}
