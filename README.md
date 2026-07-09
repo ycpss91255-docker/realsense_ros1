@@ -360,9 +360,9 @@ just build --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml
 
 #### How a profile is applied (`rs_camera_config.launch`)
 
-ROS 1 `realsense-ros` (2.3.2) has no `config_file` arg, so the repo owns a thin
-wrapper launch, `launch/rs_camera_config.launch` (baked in as
-`/rs_camera_config.launch`, the runtime CMD). It `<include>`s the stock
+ROS 1 `realsense-ros` (2.3.2) has no `config_file` arg, so the repo owns a launch
+under `config/realsense/launch/`, `rs_camera_config.launch` (baked as
+`/rs_camera_config.launch`). It `<include>`s the stock
 `realsense2_camera/rs_aligned_depth.launch` unchanged, sets `initial_reset` as a
 node param, and -- when a non-empty `config_file:=` is passed -- `<rosparam
 command="load">`s that YAML into the node's private namespace **after** the
@@ -370,6 +370,35 @@ include. roslaunch sets every param before any node starts and the later write
 wins, so the YAML overrides the launch defaults (verified with `roslaunch
 --dump-params`). Params in the YAML use the node's flat ROS 1 names
 (`color_width`, `depth_fps`, `enable_infra1`, ...), not ROS 2 dotted keys.
+
+#### Custom launch / output-topic remap (deployment)
+
+The launch is layered so a deployment can customise it (rename output topics,
+add nodes) **without editing the image and without env vars**:
+
+| Baked path | Role |
+|------------|------|
+| `/rs_camera_config.launch` | our config (above) -- **immutable** |
+| `/rs_camera.launch` | the runtime CMD's target -- default just `<include>`s our config, no remap |
+| `/rs_camera_remap.example.launch` | copy-me template: `<remap>`s + `<include>` our config |
+
+To remap outputs (e.g. a downstream that wants `/camera_image_raw`): copy
+`config/realsense/launch/rs_camera_remap.example.launch`, edit the two
+`<remap>` lines, and bind-mount your copy over `/rs_camera.launch` via
+`config/docker/setup.conf`:
+
+```ini
+[volumes]
+mount_1 = /host/path/rs_camera.launch:/rs_camera.launch:ro
+```
+
+The override `<include>`s the immutable `/rs_camera_config.launch` (so it never
+duplicates the bringup and cannot drift), and the `<remap>`s are declared
+**before** the include so they reach the realsense node (ROS 1: a remap only
+propagates down into includes that follow it). A malformed override fails loudly
+at `roslaunch` (no fallback); `xmllint` your file before mounting. The shipped
+template is validated well-formed in CI; your edited copy is your
+responsibility. See [ADR 00000002](doc/adr/00000002-camera-launch-override-for-remap.md).
 
 #### `custom/` -- our profiles
 
@@ -440,7 +469,7 @@ graph TD
 | `devel` | `devel-base` | Shipped dev image (default CMD `bash`) |
 | `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests, discarded after build (ephemeral) |
 | `runtime-base` | `sys` | Minimal base (`sudo`) |
-| `runtime` | `runtime-base` | Shipped runtime image: RealSense packages + udev rules (default CMD `roslaunch /rs_camera_config.launch initial_reset:=true`, whose wrapper includes the stock `rs_aligned_depth.launch`) |
+| `runtime` | `runtime-base` | Shipped runtime image: RealSense packages + udev rules (default CMD `roslaunch /rs_camera.launch initial_reset:=true`, which includes our `/rs_camera_config.launch` + the stock `rs_aligned_depth.launch`) |
 | `runtime-test` | `runtime` | runtime smoke, discarded after build (ephemeral) |
 
 ## Smoke Tests
@@ -484,11 +513,13 @@ realsense_ros1/
 │       ├── official/           # upstream-derived: vendored udev rules + ROS 1 port config
 │       │   ├── 99-realsense-libusb.rules  # RealSense udev rules (vendored from librealsense SDK)
 │       │   └── config.yaml     # same-meaning ROS 1 port of the ROS 2 example (cross-repo parity)
-│       └── custom/             # our camera profiles (ROS 1 param form)
-│           ├── none.yaml        # EMPTY = stock upstream defaults (default)
-│           └── usb2.yaml        # USB 2 fallback (640x480@15 + depth 480x270@15)
-├── launch/
-│   └── rs_camera_config.launch # wrapper: includes stock rs_aligned_depth.launch + optional config_file: loader
+│       ├── custom/             # our camera profiles (ROS 1 param form)
+│       │   ├── none.yaml        # EMPTY = stock upstream defaults (default)
+│       │   └── usb2.yaml        # USB 2 fallback (640x480@15 + depth 480x270@15)
+│       └── launch/             # camera launch layers (baked to /)
+│           ├── rs_camera_config.launch  # our config: include official + config_file/initial_reset (immutable)
+│           ├── rs_camera.launch         # entrypoint target: include our config (deployment bind-mounts over this to remap)
+│           └── rs_camera_remap.example.launch  # copy-me remap template (.example, like base's Dockerfile.example)
 ├── doc/
 │   ├── README.zh-TW.md          # Traditional Chinese
 │   ├── README.zh-CN.md          # Simplified Chinese

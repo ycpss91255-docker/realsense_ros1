@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<!--
+  Deployment TEMPLATE for remapping the realsense output topics to downstream
+  names. NOT used by default; copy it, edit the two <remap> lines, and bind-mount
+  your copy over /rs_camera.launch (e.g. via config/docker/setup.conf [volumes]
+  `mount_N = /host/your.launch:/rs_camera.launch:ro`). No .env / env var needed.
+
+  The <remap>s are declared BEFORE the <include> so they reach the realsense node
+  (ROS 1: a remap only propagates DOWN into includes that follow it; verified
+  empirically). The include pulls in /rs_camera_config.launch (this repo's
+  config, untouched in the image), so this template never duplicates the bringup
+  logic and does not drift.
+
+  This example file itself is validated well-formed in CI (see
+  test/smoke/camera_config.bats); your edited copy on the deployment host is your
+  responsibility: run `xmllint` on it before mounting it.
+-->
+<launch>
+  <arg name="camera"        default="camera"/>
+  <arg name="config_file"   default=""/>
+  <arg name="initial_reset" default="true"/>
+
+  <!-- Edit these two topic names for your downstream. -->
+  <remap from="/$(arg camera)/color/image_raw"                 to="/camera_image_raw"/>
+  <remap from="/$(arg camera)/aligned_depth_to_color/image_raw" to="/camera_depth_image_raw"/>
+
+  <include file="/rs_camera_config.launch">
+    <arg name="camera"        value="$(arg camera)"/>
+    <arg name="config_file"   value="$(arg config_file)"/>
+    <arg name="initial_reset" value="$(arg initial_reset)"/>
+  </include>
+</launch>

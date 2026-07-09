@@ -329,14 +329,41 @@ just build --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml
 
 #### profile 如何套用（`rs_camera_config.launch`）
 
-ROS 1 `realsense-ros`（2.3.2）沒有 `config_file` 參數，因此本 repo 自有一個薄
-wrapper launch，`launch/rs_camera_config.launch`（baked 成 `/rs_camera_config.launch`，
-即 runtime CMD）。它 `<include>` 原廠的 `realsense2_camera/rs_aligned_depth.launch`
-不做更動、把 `initial_reset` 設為 node 參數，並在傳入非空的 `config_file:=` 時，於
-include **之後**用 `<rosparam command="load">` 把該 YAML 載入 node 私有 namespace。
-roslaunch 會在任何 node 啟動前設定所有參數、後寫入者勝出，因此 YAML 會覆蓋 launch
-預設（以 `roslaunch --dump-params` 驗證過）。YAML 內的參數使用 node 的扁平 ROS 1
-名稱（`color_width`、`depth_fps`、`enable_infra1` ...），不是 ROS 2 的點式鍵。
+ROS 1 `realsense-ros`（2.3.2）沒有 `config_file` 參數,因此本 repo 在
+`config/realsense/launch/` 自有 `rs_camera_config.launch`(baked 成
+`/rs_camera_config.launch`)。它 `<include>` 原廠的
+`realsense2_camera/rs_aligned_depth.launch` 不做更動、把 `initial_reset` 設為 node
+參數,並在傳入非空的 `config_file:=` 時,於 include **之後**用
+`<rosparam command="load">` 把該 YAML 載入 node 私有 namespace。roslaunch 會在任何
+node 啟動前設定所有參數、後寫入者勝出,因此 YAML 會覆蓋 launch 預設(以
+`roslaunch --dump-params` 驗證過)。YAML 內的參數使用 node 的扁平 ROS 1 名稱
+(`color_width`、`depth_fps`、`enable_infra1` ...),不是 ROS 2 的點式鍵。
+
+#### 自訂 launch / 輸出 topic remap(部署)
+
+launch 分層,讓部署可以客製(改輸出 topic 名、加節點)**而不用改 image、也不吃 env**:
+
+| baked 路徑 | 角色 |
+|------------|------|
+| `/rs_camera_config.launch` | 我們的 config(上面)-- **immutable** |
+| `/rs_camera.launch` | runtime CMD 跑的檔 -- 預設只 `<include>` 我們的 config,無 remap |
+| `/rs_camera_remap.example.launch` | 複製用範本:`<remap>` + `<include>` 我們的 config |
+
+要 remap 輸出(例如下游要 `/camera_image_raw`):複製
+`config/realsense/launch/rs_camera_remap.example.launch`,改那兩行
+`<remap>`,再用 `config/docker/setup.conf` 把你的副本 bind-mount 蓋掉
+`/rs_camera.launch`:
+
+```ini
+[volumes]
+mount_1 = /host/path/rs_camera.launch:/rs_camera.launch:ro
+```
+
+override `<include>` 的是 immutable 的 `/rs_camera_config.launch`(不會複製 bringup、
+不 drift),`<remap>` 宣告在 include **之前**才會下推到 realsense 節點。壞掉的 override
+會在 roslaunch **直接報錯(不 fallback)**;mount 前先 `xmllint` 驗一下。repo 附的範本
+CI 會驗語法;你改過的副本自負責任。見
+[ADR 00000002](adr/00000002-camera-launch-override-for-remap.md)。
 
 #### `custom/` -- 我們的 profile
 
@@ -403,7 +430,7 @@ graph TD
 | `devel` | `devel-base` | 出貨的開發映像（預設 CMD `bash`） |
 | `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests，建置後丟棄（暫時性） |
 | `runtime-base` | `sys` | 最小基底（`sudo`） |
-| `runtime` | `runtime-base` | 出貨的 runtime 映像：RealSense 套件 + udev 規則（預設 CMD `roslaunch /rs_camera_config.launch initial_reset:=true`，wrapper 內含 stock `rs_aligned_depth.launch`） |
+| `runtime` | `runtime-base` | 出貨的 runtime 映像：RealSense 套件 + udev 規則（預設 CMD `roslaunch /rs_camera.launch initial_reset:=true`，它 include 我們的 `/rs_camera_config.launch` + 原廠 `rs_aligned_depth.launch`） |
 | `runtime-test` | `runtime` | runtime smoke，建置後丟棄（暫時性） |
 
 ## Smoke Tests
@@ -445,11 +472,13 @@ realsense_ros1/
 │       ├── official/           # 源自上游：vendored udev 規則 + ROS 1 移植版 config
 │       │   ├── 99-realsense-libusb.rules  # RealSense udev 規則（vendored 自 librealsense SDK）
 │       │   └── config.yaml     # ROS 2 範例的同義 ROS 1 移植版（跨 repo 對齊）
-│       └── custom/             # 我們的相機設定檔（ROS 1 參數格式）
-│           ├── none.yaml        # 空檔 = stock 上游預設（預設）
-│           └── usb2.yaml        # USB 2 備援（640x480@15 + depth 480x270@15）
-├── launch/
-│   └── rs_camera_config.launch # wrapper：include 原廠 rs_aligned_depth.launch + 選用 config_file: 載入器
+│       ├── custom/             # 我們的相機設定檔（ROS 1 參數格式）
+│       │   ├── none.yaml        # 空檔 = stock 上游預設（預設）
+│       │   └── usb2.yaml        # USB 2 備援（640x480@15 + depth 480x270@15）
+│       └── launch/             # 相機 launch 分層（baked 到 /）
+│           ├── rs_camera_config.launch  # 我們的 config：include 原廠 + config_file/initial_reset（immutable）
+│           ├── rs_camera.launch         # entrypoint 跑的檔：include 我們的 config（部署 bind-mount 蓋這個做 remap）
+│           └── rs_camera_remap.example.launch  # 複製用 remap 範本（.example,對標 base 的 Dockerfile.example）
 ├── doc/
 │   ├── README.zh-TW.md          # 繁體中文
 │   ├── README.zh-CN.md          # 簡體中文

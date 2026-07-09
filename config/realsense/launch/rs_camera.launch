@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!--
+  Entrypoint target (the runtime CMD runs this). Default: just <include> the
+  stable "our config" layer with no remap, so out-of-the-box behaviour is the
+  stock camera bringup.
+
+  A deployment that needs custom topic names / extra nodes bind-mounts its OWN
+  file over /rs_camera.launch (copy config/realsense/launch/examples/
+  rs_camera_remap.example.launch, edit, mount to /rs_camera.launch). That
+  override <include>s /rs_camera_config.launch (this repo's config, untouched in
+  the image) and adds e.g. <remap> BEFORE the include so the remaps reach the
+  realsense node. A malformed override fails loudly at roslaunch (no fallback) so
+  the reason shows in the container log.
+-->
+<launch>
+  <arg name="camera"        default="camera"/>
+  <arg name="config_file"   default=""/>
+  <arg name="initial_reset" default="true"/>
+
+  <include file="/rs_camera_config.launch">
+    <arg name="camera"        value="$(arg camera)"/>
+    <arg name="config_file"   value="$(arg config_file)"/>
+    <arg name="initial_reset" value="$(arg initial_reset)"/>
+  </include>
+</launch>
