@@ -38,11 +38,11 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   documented in the repo README (Camera Config section, with i18n).
 - `script/hooks/pre/build.sh` (base #440 pre-build hook): for a local
   `just build` / `./build.sh` (with `LIBREALSENSE_IMAGE` unset) it auto-builds
-  `librealsense:local` from `docker/librealsense/Dockerfile` before the main
+  `librealsense:local` from `docker/Dockerfile.librealsense` before the main
   build, mirroring how `build.sh` auto-builds `test-tools:local`. The local
   build is now self-contained -- no GHCR pull needed. If `LIBREALSENSE_IMAGE`
   is already set (CI passes the `v2.55.1-focal` GHCR tag) the hook is a no-op.
-- `docker/librealsense/Dockerfile` gains a `test` stage (publish-time smoke
+- `docker/Dockerfile.librealsense` gains a `test` stage (publish-time smoke
   GATE: asserts the `/rs-full` + `/rs-stage` trees exist, `librealsense2.so` is
   present and fully linkable with no `not found`, the versioned soname is
   present, and `/rs-stage` is pruned of the viewer / `rs-*` tools / GL lib) and

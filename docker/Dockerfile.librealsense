@@ -1,29 +1,14 @@
-# Prebuilt librealsense SDK source image (issue #88 / option B).
-#
-# ROS 1 (Noetic / ros1-legacy) is TERMINAL at librealsense v2.55.1 -- v2.56+
-# pulls ROS 2 DDS artifacts the ros1-legacy wrapper cannot build against
-# (realsense-ros#3406). So the SDK is compiled ONCE here and published to
-# ghcr.io/ycpss91255-docker/librealsense:${LIBREALSENSE_VERSION}-${UBUNTU_CODENAME};
-# the main repo Dockerfile then FROMs this image and COPYs the pre-built trees
-# instead of recompiling librealsense (~15-25 min) on every CI run. The catkin
-# wrapper (which must compile against the SDK) still builds in the main image.
-#
-# librealsense2 is a pure C++ SDK -- it does NOT depend on ROS. Its only real
-# axis is the Ubuntu platform: the compiled .so is ABI-bound to that release's
-# glibc/libstdc++. So the image is keyed on UBUNTU_CODENAME (focal, for Noetic)
-# and installs into the ROS-agnostic /usr/local prefix, and its tag is
-# ${LIBREALSENSE_VERSION}-focal rather than noetic-${LIBREALSENSE_VERSION}.
-#
-# This image is a BUILD-TIME SOURCE only (never shipped), so its size is
-# irrelevant: it carries two DESTDIR trees the consumer COPYs librealsense
-# files out of, WITHOUT dragging in the base ROS install.
-#   /rs-full  -- full install: viewer + rs-* examples + librealsense2-gl
-#   /rs-stage -- tools-pruned copy for the runtime overlay (viewer / rs-* / gl
-#                removed), matching exactly what the old inline build staged.
-#
-# The cmake flag set and prune list are IDENTICAL to the source build that
-# previously lived in the main Dockerfile's devel-base stage; keep them in sync
-# if the pins ever move (they should not -- this repo is terminal).
+# Prebuilt librealsense SDK source image: compiles librealsense ONCE and
+# publishes to
+# ghcr.io/ycpss91255-docker/librealsense:${LIBREALSENSE_VERSION}-${UBUNTU_CODENAME},
+# so the main Dockerfile FROMs it and COPYs the prebuilt trees instead of
+# recompiling (~15-25 min) every build. ROS 1 (Noetic / ros1-legacy) is TERMINAL
+# at librealsense v2.55.1: v2.56+ pulls ROS 2 DDS artifacts the ros1-legacy
+# wrapper cannot build against (realsense-ros#3406). Keyed on UBUNTU_CODENAME
+# (focal), not the ROS distro: librealsense2 is a pure C++ SDK whose .so is
+# ABI-bound to the release's glibc/libstdc++; it installs into the ROS-agnostic
+# /usr/local prefix (tag ${LIBREALSENSE_VERSION}-focal). Produces two DESTDIR
+# trees the consumer COPYs from -- a build-time source, never shipped.
 ARG UBUNTU_CODENAME=focal
 ARG LIBREALSENSE_VERSION=v2.55.1
 
@@ -33,12 +18,11 @@ ARG LIBREALSENSE_VERSION
 
 SHELL ["/bin/bash", "-x", "-euo", "pipefail", "-c"]
 
-# librealsense source-build deps (Intel's official Ubuntu list). Two things the
-# leaner ubuntu:${UBUNTU_CODENAME} base needs that the old ros-base handled for
-# us: ca-certificates (explicit -- ros-base pulled it in transitively; without
-# it the https git clone below fails TLS), and DEBIAN_FRONTEND=noninteractive on
-# the install (the GTK/GL deps pull in tzdata, whose postinst prompts for a
-# timezone on this TTY-less build otherwise, wedging it indefinitely).
+# librealsense source-build deps (Intel's official Ubuntu list). ca-certificates
+# is explicit (the https git clone below fails TLS without it) and
+# DEBIAN_FRONTEND=noninteractive is required (the GTK/GL deps pull in tzdata,
+# whose postinst otherwise prompts for a timezone on this TTY-less build and
+# wedges it indefinitely).
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -136,10 +120,8 @@ RUN set -eux; \
 
 ############################## export (published image) ##############################
 # The PUBLISHED image is literally just the two librealsense DESTDIR trees on
-# `scratch`. The consumer only ever COPYs /rs-full and /rs-stage out of this
-# image, so shipping the ros-base + build toolchain underneath was dead weight;
-# this mirrors base's test-tools image being a clean COPY-source. Built with
-# `--target export` on the build-and-push step of the publish workflow.
+# `scratch`; the consumer only ever COPYs /rs-full and /rs-stage out of it. Built
+# with `--target export` on the build-and-push step of the publish workflow.
 FROM scratch AS export
 
 COPY --from=build /rs-full /rs-full
