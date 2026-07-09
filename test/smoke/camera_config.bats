@@ -8,12 +8,12 @@ setup() {
 #
 # The Dockerfile bakes the repo-root `camera.yaml` symlink's target into the
 # image as /camera_config.yaml (default target config/realsense/custom/none.yaml
-# is EMPTY = stream the stock upstream defaults). The entrypoint rewrites the
-# roslaunch argv only when that file is NON-empty AND the command is roslaunch,
-# translating the flat YAML into rs_aligned_depth.launch `key:=value` args
-# (a plain rosparam load would be overridden by the launch's <param> tags).
-# Sourcing the entrypoint runs only the pure functions; the ROS-source + exec
-# are guarded to the real invocation, so these tests can source it safely.
+# is EMPTY = stream the stock upstream defaults). The entrypoint appends
+# `config_file:=/camera_config.yaml` to the roslaunch argv only when that file
+# is NON-empty AND the command is roslaunch; the wrapper launch
+# (/rs_camera_config.launch) then rosparam-loads the profile. Sourcing the
+# entrypoint runs only the pure functions; the ROS-source + exec are guarded to
+# the real invocation, so these tests can source it safely.
 
 @test "camera config is baked into the image" {
     assert [ -f "/camera_config.yaml" ]
@@ -26,24 +26,22 @@ setup() {
 }
 
 @test "entrypoint leaves the stock CMD unchanged for an empty config" {
-    run bash -c 'source /entrypoint.sh; _apply_camera_config roslaunch realsense2_camera rs_aligned_depth.launch initial_reset:=true; echo "${CONFIGURED_ARGV[@]}"'
+    run bash -c 'source /entrypoint.sh; _apply_camera_config roslaunch /rs_camera_config.launch initial_reset:=true; echo "${CONFIGURED_ARGV[@]}"'
     assert_success
-    assert_output "roslaunch realsense2_camera rs_aligned_depth.launch initial_reset:=true"
+    assert_output "roslaunch /rs_camera_config.launch initial_reset:=true"
 }
 
-@test "entrypoint rewrites roslaunch argv from a non-empty camera config" {
+@test "entrypoint appends config_file:= for a non-empty camera config" {
     run bash -c '
-        f="$(mktemp)"; printf "color_width: 640\ncolor_fps: 15\nenable_infra1: false\n" > "$f"
+        f="$(mktemp)"; printf "color_width: 640\n" > "$f"
         source /entrypoint.sh
         CAMERA_CONFIG_FILE="$f"
-        _apply_camera_config roslaunch realsense2_camera rs_aligned_depth.launch initial_reset:=true
-        rm -f "$f"
-        echo "${CONFIGURED_ARGV[@]}"'
+        _apply_camera_config roslaunch /rs_camera_config.launch initial_reset:=true
+        echo "${CONFIGURED_ARGV[@]}"
+        rm -f "$f"'
     assert_success
-    assert_output --partial "roslaunch realsense2_camera rs_aligned_depth.launch initial_reset:=true"
-    assert_output --partial "color_width:=640"
-    assert_output --partial "color_fps:=15"
-    assert_output --partial "enable_infra1:=false"
+    assert_output --partial "roslaunch /rs_camera_config.launch initial_reset:=true"
+    assert_output --partial "config_file:=/tmp/"
 }
 
 @test "entrypoint does not hijack a non-roslaunch command even with a config" {
