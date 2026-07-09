@@ -326,6 +326,62 @@ udev ルールはコンテナ内だけでなく **ホスト** にインストー
 `privileged` モードで実行され、`/dev` がマウントされます
 （[doc/adr/00000001-realsense-requires-privileged.md](adr/00000001-realsense-requires-privileged.md) を参照）。
 
+### カメラ設定（Camera Config）
+
+有効なカメラ profile はリポジトリ直下の `camera.yaml` **symlink** で選択します
+（`app/ros1_bridge` の `bridge.yaml` に倣っています）。デフォルト対象は
+`config/realsense/custom/none.yaml` という**空ファイル**で、runtime image は従来どおり
+標準の上流デフォルト（640x480x30）をストリームします。Dockerfile はリンク対象を
+`/camera_config.yaml` に COPY し、そのファイルが空でないとき entrypoint は起動コマンド
+に `config_file:=/camera_config.yaml` を追加します。空ならデフォルトの `CMD` のままです。
+
+profile を有効化するには symlink を張り替えるか build arg を使います：
+
+```bash
+ln -sf config/realsense/custom/usb2.yaml camera.yaml   # USB 2 profile を有効化
+ln -sf config/realsense/custom/none.yaml camera.yaml   # 標準デフォルトへ戻す
+just build --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml
+```
+
+#### profile の適用方法（`rs_camera_config.launch`）
+
+ROS 1 `realsense-ros`（2.3.2）には `config_file` 引数がないため、リポジトリが薄い
+wrapper launch `launch/rs_camera_config.launch`（`/rs_camera_config.launch` として焼き
+込み、runtime CMD）を所有します。標準の `realsense2_camera/rs_aligned_depth.launch` を
+`<include>` し（変更なし）、`initial_reset` を node パラメータとして設定し、空でない
+`config_file:=` が渡されたとき include の**後**で `<rosparam command="load">` によって
+その YAML を node のプライベート namespace に読み込みます。roslaunch は node 起動前に
+全パラメータを設定し後勝ちのため、YAML が launch デフォルトを上書きします
+（`roslaunch --dump-params` で検証済み）。YAML 内のパラメータは node のフラットな
+ROS 1 名（`color_width`、`depth_fps`、`enable_infra1` ...）を使い、ROS 2 のドット式
+キーではありません。
+
+#### `custom/` -- 独自 profile
+
+| ファイル | 用途 |
+|----------|------|
+| `none.yaml` | 空（0 bytes）-- 標準の上流デフォルト（640x480x30）。デフォルト。 |
+| `usb2.yaml` | USB 2.x フォールバック：color 640x480@15、depth 480x270@15、整列深度オン、IR + IMU オフ。 |
+
+D435/D455 は USB 2 接続では標準の 640x480x30 color + depth を維持できず（カメラは
+リンクをネゴシエートするが 30 fps では **0 フレーム**しか出さない）、`usb2.yaml` は
+480 Mbps のリンクに収まるよう帯域を削ります：color と depth を 15 fps に、depth を
+480x270 に下げ、リンクに余裕のない IR（`enable_infra1/2`）と IMU
+（`enable_gyro/accel`）ストリームをオフにします。整列深度は有効のままです。USB 3
+ポートが USB 2 に落ちる Raspberry Pi 5（arm64）で検証済みです。
+
+#### `official/` -- ROS 2 サンプルの ROS 1 移植版
+
+ROS 1 `realsense-ros` は**上流に config YAML がなく**（調整は `rs_*.launch` 引数のみ）、
+ROS 2 sibling と違って vendored すべき公式ファイルもドリフトチェックもありません。ROS 2
+との整合のため、`config/realsense/official/config.yaml` は ROS 2 上流サンプル設定の
+**同義 ROS 1 移植版**を保持し、ROS 1 パラメータ名に翻訳しています
+（`rgb_camera.color_profile: 1280x720x15` -> `color_width/height/fps`、
+`align_depth.enable` -> `align_depth` ...）。ROS 2 専用の `publish_tf` /
+`tf_publish_rate` は省略しています -- ROS 1 realsense-ros はデフォルトで静的 TF ツリー
+を配信するためです。build arg には紐づいていません；`camera.yaml` をここに向けるか
+（または `--build-arg CAMERA_CONFIG=config/realsense/official/config.yaml`）で使えます。
+
 ## アーキテクチャ
 
 ### Docker ビルドステージ図
@@ -360,7 +416,7 @@ graph TD
 | `devel` | `devel-base` | 出荷する開発イメージ（デフォルト CMD `bash`） |
 | `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests、ビルド後に破棄（一時的） |
 | `runtime-base` | `sys` | 最小ベース（`sudo`） |
-| `runtime` | `runtime-base` | 出荷するランタイムイメージ：RealSense パッケージ + udev ルール（デフォルト CMD `roslaunch realsense2_camera rs_aligned_depth.launch`） |
+| `runtime` | `runtime-base` | 出荷するランタイムイメージ：RealSense パッケージ + udev ルール（デフォルト CMD `roslaunch /rs_camera_config.launch initial_reset:=true`、wrapper は stock `rs_aligned_depth.launch` を include） |
 | `runtime-test` | `runtime` | runtime smoke、ビルド後に破棄（一時的） |
 
 ## Smoke Tests
@@ -399,11 +455,14 @@ realsense_ros1/
 │   ├── shell/
 │   │   └── bashrc.d/10-ros-source.sh  # インタラクティブシェル向けに ROS を source
 │   └── realsense/
-│       ├── README.md            # 注記: ROS 1 は上流に config YAML なし（drift-check なし）
 │       ├── 99-realsense-libusb.rules  # RealSense udev ルール
-│       └── custom/              # 独自のカメラ設定（ROS 1 パラメータ形式）
+│       ├── official/           # ROS 2 上流サンプルの ROS 1 移植版（上流 drift-check なし）
+│       │   └── config.yaml     # 同義の ROS 1 移植版、クロスリポジトリ整合のため保持
+│       └── custom/             # 独自のカメラ設定（ROS 1 パラメータ形式）
 │           ├── none.yaml        # 空 = stock 上流デフォルト（デフォルト）
 │           └── usb2.yaml        # USB 2 フォールバック（640x480@15 + depth 480x270@15）
+├── launch/
+│   └── rs_camera_config.launch # wrapper：標準の rs_aligned_depth.launch を include + 任意の config_file: ローダー
 ├── doc/
 │   ├── README.zh-TW.md          # 繁体字中国語
 │   ├── README.zh-CN.md          # 簡体字中国語

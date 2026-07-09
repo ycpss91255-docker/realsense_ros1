@@ -340,6 +340,65 @@ and reloads udev. Re-plug the camera afterwards. The container itself runs in
 `privileged` mode with `/dev` mounted (see
 [doc/adr/00000001-realsense-requires-privileged.md](doc/adr/00000001-realsense-requires-privileged.md)).
 
+### Camera Config
+
+The active camera profile is selected by the root `camera.yaml` **symlink**
+(modeled on `app/ros1_bridge`'s `bridge.yaml`). Its default target is
+`config/realsense/custom/none.yaml`, an **empty** file, so the runtime image
+streams the stock upstream default (640x480x30) exactly as before. The Dockerfile
+COPYs the symlink target to `/camera_config.yaml`; when that file is non-empty
+the entrypoint appends `config_file:=/camera_config.yaml` to the launch,
+otherwise it runs the default `CMD` unchanged.
+
+Activate a profile either by repointing the symlink or per build:
+
+```bash
+ln -sf config/realsense/custom/usb2.yaml camera.yaml   # activate USB 2 profile
+ln -sf config/realsense/custom/none.yaml camera.yaml   # back to stock defaults
+just build --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml
+```
+
+#### How a profile is applied (`rs_camera_config.launch`)
+
+ROS 1 `realsense-ros` (2.3.2) has no `config_file` arg, so the repo owns a thin
+wrapper launch, `launch/rs_camera_config.launch` (baked in as
+`/rs_camera_config.launch`, the runtime CMD). It `<include>`s the stock
+`realsense2_camera/rs_aligned_depth.launch` unchanged, sets `initial_reset` as a
+node param, and -- when a non-empty `config_file:=` is passed -- `<rosparam
+command="load">`s that YAML into the node's private namespace **after** the
+include. roslaunch sets every param before any node starts and the later write
+wins, so the YAML overrides the launch defaults (verified with `roslaunch
+--dump-params`). Params in the YAML use the node's flat ROS 1 names
+(`color_width`, `depth_fps`, `enable_infra1`, ...), not ROS 2 dotted keys.
+
+#### `custom/` -- our profiles
+
+| File | Purpose |
+|------|---------|
+| `none.yaml` | Empty (0 bytes) -- stock upstream defaults (640x480x30). Default. |
+| `usb2.yaml` | USB 2.x fallback: color 640x480@15, depth 480x270@15, aligned depth on, IR + IMU off. |
+
+A D435/D455 on a USB 2 link cannot sustain the stock 640x480x30 color + depth
+(the camera negotiates the link but delivers **0 frames** at 30 fps), so
+`usb2.yaml` trims bandwidth until the streams fit a 480 Mbps link: color and
+depth drop to 15 fps, depth to 480x270, and the IR (`enable_infra1/2`) and IMU
+(`enable_gyro/accel`) streams -- pure bandwidth the link cannot spare -- are
+turned off. Aligned depth stays on. Validated on a Raspberry Pi 5 (arm64) whose
+USB 3 port fell back to USB 2.
+
+#### `official/` -- ROS 1 port of the ROS 2 example
+
+ROS 1 `realsense-ros` ships **no config YAML upstream** (it exposes tuning only
+through `rs_*.launch` args), so unlike the ROS 2 sibling there is nothing
+official to vendor and no drift check. For cross-repo parity,
+`config/realsense/official/config.yaml` keeps a same-meaning **ROS 1 port** of
+the ROS 2 upstream example config, translated to ROS 1 param names
+(`rgb_camera.color_profile: 1280x720x15` -> `color_width/height/fps`,
+`align_depth.enable` -> `align_depth`, ...). The ROS 2-only `publish_tf` /
+`tf_publish_rate` keys are dropped -- ROS 1 realsense-ros publishes the static TF
+tree by default. It is not wired to any build arg; point `camera.yaml` at it (or
+`--build-arg CAMERA_CONFIG=config/realsense/official/config.yaml`) to use it.
+
 ## Architecture
 
 ### Docker Build Stage Diagram
@@ -374,7 +433,7 @@ graph TD
 | `devel` | `devel-base` | Shipped dev image (default CMD `bash`) |
 | `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests, discarded after build (ephemeral) |
 | `runtime-base` | `sys` | Minimal base (`sudo`) |
-| `runtime` | `runtime-base` | Shipped runtime image: RealSense packages + udev rules (default CMD `roslaunch realsense2_camera rs_aligned_depth.launch`) |
+| `runtime` | `runtime-base` | Shipped runtime image: RealSense packages + udev rules (default CMD `roslaunch /rs_camera_config.launch initial_reset:=true`, whose wrapper includes the stock `rs_aligned_depth.launch`) |
 | `runtime-test` | `runtime` | runtime smoke, discarded after build (ephemeral) |
 
 ## Smoke Tests
@@ -415,11 +474,14 @@ realsense_ros1/
 │   ├── shell/
 │   │   └── bashrc.d/10-ros-source.sh  # source ROS for interactive shells
 │   └── realsense/
-│       ├── README.md            # note: ROS 1 ships no config YAML upstream (no drift-check)
 │       ├── 99-realsense-libusb.rules  # RealSense udev rules
-│       └── custom/              # our camera profiles (ROS 1 param form)
+│       ├── official/           # ROS 1 port of the ROS 2 upstream example (no upstream drift-check)
+│       │   └── config.yaml     # same-meaning ROS 1 port, kept for cross-repo parity
+│       └── custom/             # our camera profiles (ROS 1 param form)
 │           ├── none.yaml        # EMPTY = stock upstream defaults (default)
 │           └── usb2.yaml        # USB 2 fallback (640x480@15 + depth 480x270@15)
+├── launch/
+│   └── rs_camera_config.launch # wrapper: includes stock rs_aligned_depth.launch + optional config_file: loader
 ├── doc/
 │   ├── README.zh-TW.md          # Traditional Chinese
 │   ├── README.zh-CN.md          # Simplified Chinese
