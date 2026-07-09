@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<!--
+  "Our config" layer: the repo-owned camera bringup. INCLUDEs the stock
+  realsense2_camera rs_aligned_depth.launch and adds the config_file YAML profile
+  loader (ROS 1 realsense-ros 2.3.2 has no config_file arg) plus the
+  initial_reset nodelet param.
+
+  Stable/immutable in the image at /rs_camera_config.launch. It is <include>d by
+  /rs_camera.launch (the entrypoint target); a deployment can bind-mount its own
+  /rs_camera.launch to add e.g. output-topic remaps WITHOUT touching this file.
+
+  config_file is applied with <rosparam> AFTER the include (later write wins, so
+  the YAML overrides the launch defaults). initial_reset is a nodelet param (not
+  an rs_aligned_depth.launch arg), so it is set the same way.
+-->
+<launch>
+  <arg name="camera"        default="camera"/>
+  <arg name="config_file"   default=""/>
+  <arg name="initial_reset" default="true"/>
+
+  <include file="$(find realsense2_camera)/launch/rs_aligned_depth.launch">
+    <arg name="camera" value="$(arg camera)"/>
+  </include>
+
+  <param name="$(arg camera)/realsense2_camera/initial_reset" value="$(arg initial_reset)"/>
+
+  <group if="$(eval config_file != str())">
+    <rosparam command="load" file="$(arg config_file)" ns="$(arg camera)/realsense2_camera"/>
+  </group>
+</launch>

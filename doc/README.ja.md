@@ -345,9 +345,9 @@ just build --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml
 
 #### profile の適用方法（`rs_camera_config.launch`）
 
-ROS 1 `realsense-ros`（2.3.2）には `config_file` 引数がないため、リポジトリが薄い
-wrapper launch `launch/rs_camera_config.launch`（`/rs_camera_config.launch` として焼き
-込み、runtime CMD）を所有します。標準の `realsense2_camera/rs_aligned_depth.launch` を
+ROS 1 `realsense-ros`（2.3.2）には `config_file` 引数がないため、リポジトリは
+`config/realsense/launch/` に `rs_camera_config.launch`（`/rs_camera_config.launch`
+として焼き込み）を持ちます。標準の `realsense2_camera/rs_aligned_depth.launch` を
 `<include>` し（変更なし）、`initial_reset` を node パラメータとして設定し、空でない
 `config_file:=` が渡されたとき include の**後**で `<rosparam command="load">` によって
 その YAML を node のプライベート namespace に読み込みます。roslaunch は node 起動前に
@@ -355,6 +355,33 @@ wrapper launch `launch/rs_camera_config.launch`（`/rs_camera_config.launch` と
 （`roslaunch --dump-params` で検証済み）。YAML 内のパラメータは node のフラットな
 ROS 1 名（`color_width`、`depth_fps`、`enable_infra1` ...）を使い、ROS 2 のドット式
 キーではありません。
+
+#### カスタム launch / 出力トピック remap（デプロイ）
+
+launch は階層化されており、デプロイが **image を変えず・env も使わず** にカスタマイズ
+（出力トピック名の変更、ノード追加）できます:
+
+| 焼き込みパス | 役割 |
+|--------------|------|
+| `/rs_camera_config.launch` | 我々の config（上記）-- **immutable** |
+| `/rs_camera.launch` | runtime CMD が実行するファイル -- デフォルトは我々の config を `<include>` するだけ、remap なし |
+| `/rs_camera_remap.example.launch` | コピー用テンプレート:`<remap>` + 我々の config を `<include>` |
+
+出力を remap するには（例:下流が `/camera_image_raw` を要求）:
+`config/realsense/launch/rs_camera_remap.example.launch` をコピーし、2 つの
+`<remap>` 行を編集し、`config/docker/setup.conf` でそのコピーを `/rs_camera.launch` に
+bind-mount します:
+
+```ini
+[volumes]
+mount_1 = /host/path/rs_camera.launch:/rs_camera.launch:ro
+```
+
+override は immutable な `/rs_camera_config.launch` を `<include>` する（bringup を複製
+せず drift しない）。`<remap>` は include の**前**に宣言してこそ realsense ノードに届き
+ます。壊れた override は roslaunch で**明示的にエラー（fallback なし）**;mount 前に
+`xmllint` してください。同梱テンプレートは CI で構文検証されます;編集したコピーは
+自己責任です。[ADR 00000002](adr/00000002-camera-launch-override-for-remap.md) を参照。
 
 #### `custom/` -- 独自 profile
 
@@ -424,7 +451,7 @@ graph TD
 | `devel` | `devel-base` | 出荷する開発イメージ（デフォルト CMD `bash`） |
 | `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests、ビルド後に破棄（一時的） |
 | `runtime-base` | `sys` | 最小ベース（`sudo`） |
-| `runtime` | `runtime-base` | 出荷するランタイムイメージ：RealSense パッケージ + udev ルール（デフォルト CMD `roslaunch /rs_camera_config.launch initial_reset:=true`、wrapper は stock `rs_aligned_depth.launch` を include） |
+| `runtime` | `runtime-base` | 出荷するランタイムイメージ：RealSense パッケージ + udev ルール（デフォルト CMD `roslaunch /rs_camera.launch initial_reset:=true`、我々の `/rs_camera_config.launch` + 標準の `rs_aligned_depth.launch` を include） |
 | `runtime-test` | `runtime` | runtime smoke、ビルド後に破棄（一時的） |
 
 ## Smoke Tests
@@ -466,11 +493,13 @@ realsense_ros1/
 │       ├── official/           # 上流由来：vendored udev ルール + ROS 1 移植版 config
 │       │   ├── 99-realsense-libusb.rules  # RealSense udev ルール（librealsense SDK から vendored）
 │       │   └── config.yaml     # ROS 2 サンプルの同義 ROS 1 移植版（クロスリポジトリ整合）
-│       └── custom/             # 独自のカメラ設定（ROS 1 パラメータ形式）
-│           ├── none.yaml        # 空 = stock 上流デフォルト（デフォルト）
-│           └── usb2.yaml        # USB 2 フォールバック（640x480@15 + depth 480x270@15）
-├── launch/
-│   └── rs_camera_config.launch # wrapper：標準の rs_aligned_depth.launch を include + 任意の config_file: ローダー
+│       ├── custom/             # 独自のカメラ設定（ROS 1 パラメータ形式）
+│       │   ├── none.yaml        # 空 = stock 上流デフォルト（デフォルト）
+│       │   └── usb2.yaml        # USB 2 フォールバック（640x480@15 + depth 480x270@15）
+│       └── launch/             # カメラ launch 階層（/ に焼き込み）
+│           ├── rs_camera_config.launch  # 我々の config：標準 + config_file/initial_reset を include（immutable）
+│           ├── rs_camera.launch         # entrypoint が実行：我々の config を include（デプロイはこれに bind-mount して remap）
+│           └── rs_camera_remap.example.launch  # コピー用 remap テンプレート（.example、base の Dockerfile.example に対応）
 ├── doc/
 │   ├── README.zh-TW.md          # 繁体字中国語
 │   ├── README.zh-CN.md          # 簡体字中国語

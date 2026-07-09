@@ -27,9 +27,9 @@ setup() {
 }
 
 @test "entrypoint leaves the stock CMD unchanged for an empty config" {
-    run bash -c 'source /entrypoint.sh; _apply_camera_config roslaunch /rs_camera_config.launch initial_reset:=true; echo "${CONFIGURED_ARGV[@]}"'
+    run bash -c 'source /entrypoint.sh; _apply_camera_config roslaunch /rs_camera.launch initial_reset:=true; echo "${CONFIGURED_ARGV[@]}"'
     assert_success
-    assert_output "roslaunch /rs_camera_config.launch initial_reset:=true"
+    assert_output "roslaunch /rs_camera.launch initial_reset:=true"
 }
 
 @test "entrypoint appends config_file:= for a non-empty camera config" {
@@ -37,11 +37,11 @@ setup() {
         f="$(mktemp)"; printf "color_width: 640\n" > "$f"
         source /entrypoint.sh
         CAMERA_CONFIG_FILE="$f"
-        _apply_camera_config roslaunch /rs_camera_config.launch initial_reset:=true
+        _apply_camera_config roslaunch /rs_camera.launch initial_reset:=true
         echo "${CONFIGURED_ARGV[@]}"
         rm -f "$f"'
     assert_success
-    assert_output --partial "roslaunch /rs_camera_config.launch initial_reset:=true"
+    assert_output --partial "roslaunch /rs_camera.launch initial_reset:=true"
     assert_output --partial "config_file:=/tmp/"
 }
 
@@ -59,32 +59,52 @@ setup() {
     assert_output "bash"
 }
 
-# -------------------- Wrapper launch + Dockerfile wiring --------------------
+# -------------------- Camera launch layers + Dockerfile wiring --------------------
 #
-# The runtime CMD is `roslaunch /rs_camera_config.launch initial_reset:=true`,
-# so the wrapper launch must be baked into the image and the Dockerfile CMD must
-# reference it. The Dockerfile is at /lint/Dockerfile (devel-test stage).
+# Three launch layers are baked at / (see config/realsense/launch/):
+#   /rs_camera_config.launch          our config -- includes the stock
+#                                     rs_aligned_depth.launch + config_file/reset.
+#   /rs_camera.launch                 entrypoint target -- includes our config.
+#   /rs_camera_remap.example.launch   copy-me template -- remap + include our config.
+# The runtime CMD is `roslaunch /rs_camera.launch initial_reset:=true`; a
+# deployment bind-mounts its own /rs_camera.launch over the baked one to remap.
 
-@test "wrapper launch is baked into the image (/rs_camera_config.launch exists)" {
-    # The runtime CMD depends on it; a missing COPY would leave the container
-    # exiting immediately on `just run`.
+@test "camera launch layers are baked into the image" {
     assert_file_exists "/rs_camera_config.launch"
+    assert_file_exists "/rs_camera.launch"
+    assert_file_exists "/rs_camera_remap.example.launch"
 }
 
-@test "wrapper launch is well-formed XML (roslaunch-parseable)" {
-    # Regression: a '--' (double hyphen) inside the header XML comment made
-    # roslaunch reject the file ("Invalid roslaunch XML syntax: not well-formed
-    # (invalid token)"), so the node relaunch-looped and never streamed -- yet
-    # the file-exists check above still passed. Parse it as XML to catch any
-    # malformed-launch regression at build time. python3 ships with ROS Noetic.
-    assert_file_exists "/rs_camera_config.launch"
-    run python3 -c "import xml.dom.minidom as m; m.parse('/rs_camera_config.launch')"
+@test "camera launch files are well-formed XML (xmllint)" {
+    # Regression: a '--' (double hyphen) inside a header XML comment makes
+    # roslaunch reject the file ("not well-formed (invalid token)"), which the
+    # exists check above cannot catch -- the node then relaunch-loops and never
+    # streams. xmllint validates all three baked launches, incl. the template we
+    # ship (a deployment's own edited copy is its responsibility).
+    run xmllint --noout /rs_camera_config.launch /rs_camera.launch /rs_camera_remap.example.launch
     assert_success
 }
 
-@test "Dockerfile CMD launches the wrapper (/rs_camera_config.launch)" {
+@test "entry target + example include our config (no logic duplication / drift)" {
+    # /rs_camera.launch and the template must <include> our config, not re-derive
+    # its bringup logic, so our config stays the single source and cannot drift.
+    run grep -F '<include file="/rs_camera_config.launch">' /rs_camera.launch
+    assert_success
+    run grep -F '<include file="/rs_camera_config.launch">' /rs_camera_remap.example.launch
+    assert_success
+}
+
+@test "remap template declares the output-topic remaps before the include" {
+    # The remaps must precede the include so they reach the realsense node.
+    run grep -F 'remap from="/$(arg camera)/color/image_raw"' /rs_camera_remap.example.launch
+    assert_success
+    run grep -F 'remap from="/$(arg camera)/aligned_depth_to_color/image_raw"' /rs_camera_remap.example.launch
+    assert_success
+}
+
+@test "Dockerfile CMD launches the entry target (/rs_camera.launch)" {
     assert_file_exists "${DOCKERFILE}"
-    run grep -F 'CMD ["roslaunch", "/rs_camera_config.launch", "initial_reset:=true"]' "${DOCKERFILE}"
+    run grep -F 'CMD ["roslaunch", "/rs_camera.launch", "initial_reset:=true"]' "${DOCKERFILE}"
     assert_success
 }
 

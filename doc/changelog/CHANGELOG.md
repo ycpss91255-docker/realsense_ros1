@@ -17,6 +17,20 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   launch file as XML at build time.
 
 ### Added
+- Deployment-overridable camera launch (topic remap etc.), documented in
+  `doc/adr/00000002`. The launch is now three layers under
+  `config/realsense/launch/` (all baked to `/`): `rs_camera_config.launch` (our
+  config -- includes the stock `rs_aligned_depth.launch` + config_file/reset,
+  immutable), `rs_camera.launch` (the runtime CMD target -- `<include>`s our
+  config, no remap by default), and `examples/rs_camera_remap.example.launch`
+  (copy-me template). A deployment renames output topics (e.g. downstream wants
+  `/camera_image_raw`) by copying the template, editing its `<remap>` lines, and
+  bind-mounting the copy over `/rs_camera.launch` (`config/docker/setup.conf`
+  `[volumes]`) -- no `.env`/env var, no image edit; the override `<include>`s the
+  immutable config so it never drifts. No fallback: a malformed override fails
+  loudly at roslaunch. The shipped template is `xmllint`-validated in CI
+  (`test/smoke/camera_config.bats`, which now also `xmllint`s all baked
+  launches). Runtime CMD is now `roslaunch /rs_camera.launch initial_reset:=true`.
 - Selectable camera config, modeled on the `app/ros1_bridge` `bridge.yaml`
   pattern. A repo-root `camera.yaml` symlink selects the active profile;
   `config/realsense/custom/` holds our profiles (`none.yaml`, an EMPTY 0-byte

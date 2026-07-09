@@ -1,6 +1,6 @@
 # TEST.md
 
-**104 tests** total.
+**106 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -113,18 +113,20 @@
 
 ## test/smoke/camera_config.bats
 
-### Camera config wiring (9)
+### Camera config wiring (11)
 
 | Test | Description |
 |------|-------------|
 | `camera config is baked into the image` | `/camera_config.yaml` exists (baked from the `camera.yaml` symlink target) |
 | `default baked camera config is empty (stock upstream defaults)` | Default `none.yaml` is 0 bytes, so the stock CMD streams the upstream defaults |
 | `entrypoint leaves the stock CMD unchanged for an empty config` | `_apply_camera_config` keeps the original argv when `/camera_config.yaml` is empty |
-| `entrypoint appends config_file:= for a non-empty camera config` | A non-empty config appends `config_file:=/camera_config.yaml` to the `roslaunch /rs_camera_config.launch` argv (wrapper loads the profile) |
+| `entrypoint appends config_file:= for a non-empty camera config` | A non-empty config appends `config_file:=/camera_config.yaml` to the `roslaunch /rs_camera.launch` argv (wrapper loads the profile) |
 | `entrypoint does not hijack a non-roslaunch command even with a config` | Non-`roslaunch` command (devel `bash`) is left unchanged even when a profile is baked |
-| `wrapper launch is baked into the image (/rs_camera_config.launch exists)` | `/rs_camera_config.launch` exists (the runtime CMD depends on it) |
-| `wrapper launch is well-formed XML (roslaunch-parseable)` | Parses `/rs_camera_config.launch` as XML -- regression for the `--`-in-comment bug that made roslaunch reject it and the node relaunch-loop |
-| `Dockerfile CMD launches the wrapper (/rs_camera_config.launch)` | Dockerfile CMD is `roslaunch /rs_camera_config.launch initial_reset:=true` |
+| `camera launch layers are baked into the image` | `/rs_camera_config.launch` (our config), `/rs_camera.launch` (entry target), `/rs_camera_remap.example.launch` (template) all exist |
+| `camera launch files are well-formed XML (xmllint)` | `xmllint` validates all three baked launches -- regression for the `--`-in-comment bug that made roslaunch reject a launch and relaunch-loop |
+| `entry target + example include our config (no logic duplication / drift)` | `/rs_camera.launch` and the template `<include>` `/rs_camera_config.launch` rather than re-deriving the bringup |
+| `remap template declares the output-topic remaps before the include` | The template declares the color + aligned-depth `<remap>`s before the include (so they reach the node) |
+| `Dockerfile CMD launches the entry target (/rs_camera.launch)` | Dockerfile CMD is `roslaunch /rs_camera.launch initial_reset:=true` |
 | `Dockerfile declares CAMERA_CONFIG and COPYs it to /camera_config.yaml` | `ARG CAMERA_CONFIG="camera.yaml"` + `COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml` |
 
 ## test/smoke/dockerfile_guards.bats

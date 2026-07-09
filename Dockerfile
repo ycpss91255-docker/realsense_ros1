@@ -135,6 +135,8 @@ RUN apt-get update && \
         python3-pip \
         python3-dev \
         python3-setuptools \
+        # xmllint: validates the camera launch files in the smoke suite
+        libxml2-utils \
         # ROS 1 tools
         bash-completion \
         python3-catkin-tools \
@@ -249,11 +251,13 @@ COPY --chmod=0755 "./${ENTRYPOINT_FILE}" "/entrypoint.sh"
 # profile: --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml.
 ARG CAMERA_CONFIG="camera.yaml"
 COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml
-# Repo-owned wrapper launch: includes the stock rs_aligned_depth.launch and adds
-# an optional config_file:= profile loader (ROS 1 realsense-ros has none). The
-# entrypoint appends config_file:= to a roslaunch when /camera_config.yaml is
-# non-empty; devel users can also run it directly.
-COPY --chmod=0644 launch/rs_camera_config.launch /rs_camera_config.launch
+# Camera launch, three layers (see config/realsense/launch/):
+#   /rs_camera_config.launch  our config -- includes stock rs_aligned_depth.launch
+#                             + config_file/initial_reset. Stable/immutable.
+#   /rs_camera.launch         entrypoint target -- includes our config, no remap.
+#                             A deployment bind-mounts its own over this to remap.
+#   /rs_camera_remap.example.launch  copy-me template (remap + include our config).
+COPY --chmod=0644 config/realsense/launch/rs_camera_config.launch config/realsense/launch/rs_camera.launch config/realsense/launch/rs_camera_remap.example.launch /
 COPY --chown="${USER}":"${GROUP}" --chmod=0755 .base/config "${CONFIG_DIR}"
 COPY --chown="${USER}":"${GROUP}" --chmod=0755 "${CONFIG_SRC}" "${CONFIG_DIR}"
 
@@ -416,9 +420,9 @@ COPY --chmod=0755 script/entrypoint.sh /entrypoint.sh
 # bakes a profile the entrypoint then applies to rs_aligned_depth.launch.
 ARG CAMERA_CONFIG="camera.yaml"
 COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml
-# Wrapper launch (see the devel stage for the full rationale): includes the
-# stock rs_aligned_depth.launch + an optional config_file:= profile loader.
-COPY --chmod=0644 launch/rs_camera_config.launch /rs_camera_config.launch
+# Camera launch, three layers (see the devel stage / config/realsense/launch/):
+# our config (immutable) + the entrypoint target + the copy-me remap template.
+COPY --chmod=0644 config/realsense/launch/rs_camera_config.launch config/realsense/launch/rs_camera.launch config/realsense/launch/rs_camera_remap.example.launch /
 
 USER "${USER}"
 WORKDIR "${HOME}/work"
@@ -429,10 +433,10 @@ ENTRYPOINT ["/entrypoint.sh"]
 # initial_reset:=true resets the camera at startup so a D455 cold-start on the
 # RSUSB/arm64 backend does not wedge the first stream-open (RS2_USB_STATUS_IO,
 # topics stuck at 0 Hz); see #93. Adds a few seconds; override the arg to skip.
-# The wrapper launch streams the stock defaults unless a profile is baked in
-# (empty /camera_config.yaml = stock), in which case the entrypoint appends
-# config_file:=/camera_config.yaml.
-CMD ["roslaunch", "/rs_camera_config.launch", "initial_reset:=true"]
+# The entrypoint target /rs_camera.launch includes our config; a deployment can
+# bind-mount its own over it to remap outputs. Empty /camera_config.yaml = stock;
+# a baked profile makes the entrypoint append config_file:=/camera_config.yaml.
+CMD ["roslaunch", "/rs_camera.launch", "initial_reset:=true"]
 
 ############################## runtime-test (ephemeral) ##############################
 # Install-check smoke for the runtime image (template v0.21.1+ #243).

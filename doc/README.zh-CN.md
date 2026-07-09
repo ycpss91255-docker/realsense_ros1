@@ -329,14 +329,41 @@ just build --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml
 
 #### profile 如何套用（`rs_camera_config.launch`）
 
-ROS 1 `realsense-ros`（2.3.2）没有 `config_file` 参数，因此本 repo 自有一个薄
-wrapper launch，`launch/rs_camera_config.launch`（baked 成 `/rs_camera_config.launch`，
-即 runtime CMD）。它 `<include>` 原厂的 `realsense2_camera/rs_aligned_depth.launch`
-不做更改、把 `initial_reset` 设为 node 参数，并在传入非空的 `config_file:=` 时，于
-include **之后**用 `<rosparam command="load">` 把该 YAML 载入 node 私有 namespace。
-roslaunch 会在任何 node 启动前设定所有参数、后写入者胜出，因此 YAML 会覆盖 launch
-默认（用 `roslaunch --dump-params` 验证过）。YAML 内的参数使用 node 的扁平 ROS 1
-名称（`color_width`、`depth_fps`、`enable_infra1` ...），不是 ROS 2 的点式键。
+ROS 1 `realsense-ros`（2.3.2）没有 `config_file` 参数,因此本 repo 在
+`config/realsense/launch/` 自有 `rs_camera_config.launch`(baked 成
+`/rs_camera_config.launch`)。它 `<include>` 原厂的
+`realsense2_camera/rs_aligned_depth.launch` 不做更改、把 `initial_reset` 设为 node
+参数,并在传入非空的 `config_file:=` 时,于 include **之后**用
+`<rosparam command="load">` 把该 YAML 载入 node 私有 namespace。roslaunch 会在任何
+node 启动前设定所有参数、后写入者胜出,因此 YAML 会覆盖 launch 默认(用
+`roslaunch --dump-params` 验证过)。YAML 内的参数使用 node 的扁平 ROS 1 名称
+(`color_width`、`depth_fps`、`enable_infra1` ...),不是 ROS 2 的点式键。
+
+#### 自定义 launch / 输出 topic remap(部署)
+
+launch 分层,让部署可以定制(改输出 topic 名、加节点)**而不用改 image、也不吃 env**:
+
+| baked 路径 | 角色 |
+|------------|------|
+| `/rs_camera_config.launch` | 我们的 config(上面)-- **immutable** |
+| `/rs_camera.launch` | runtime CMD 跑的文件 -- 默认只 `<include>` 我们的 config,无 remap |
+| `/rs_camera_remap.example.launch` | 复制用范本:`<remap>` + `<include>` 我们的 config |
+
+要 remap 输出(例如下游要 `/camera_image_raw`):复制
+`config/realsense/launch/rs_camera_remap.example.launch`,改那两行
+`<remap>`,再用 `config/docker/setup.conf` 把你的副本 bind-mount 盖掉
+`/rs_camera.launch`:
+
+```ini
+[volumes]
+mount_1 = /host/path/rs_camera.launch:/rs_camera.launch:ro
+```
+
+override `<include>` 的是 immutable 的 `/rs_camera_config.launch`(不会复制 bringup、
+不 drift),`<remap>` 声明在 include **之前**才会下推到 realsense 节点。坏掉的 override
+会在 roslaunch **直接报错(不 fallback)**;mount 前先 `xmllint` 验一下。repo 附的范本
+CI 会验语法;你改过的副本自负责任。见
+[ADR 00000002](adr/00000002-camera-launch-override-for-remap.md)。
 
 #### `custom/` -- 我们的 profile
 
@@ -403,7 +430,7 @@ graph TD
 | `devel` | `devel-base` | 出货的开发镜像（默认 CMD `bash`） |
 | `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests，构建后丢弃（临时性） |
 | `runtime-base` | `sys` | 精简基础（`sudo`） |
-| `runtime` | `runtime-base` | 出货的运行时镜像：RealSense 软件包 + udev 规则（默认 CMD `roslaunch /rs_camera_config.launch initial_reset:=true`，wrapper 内含 stock `rs_aligned_depth.launch`） |
+| `runtime` | `runtime-base` | 出货的运行时镜像：RealSense 软件包 + udev 规则（默认 CMD `roslaunch /rs_camera.launch initial_reset:=true`，它 include 我们的 `/rs_camera_config.launch` + 原厂 `rs_aligned_depth.launch`） |
 | `runtime-test` | `runtime` | runtime smoke，构建后丢弃（临时性） |
 
 ## Smoke Tests
@@ -445,11 +472,13 @@ realsense_ros1/
 │       ├── official/           # 源自上游：vendored udev 规则 + ROS 1 移植版 config
 │       │   ├── 99-realsense-libusb.rules  # RealSense udev 规则（vendored 自 librealsense SDK）
 │       │   └── config.yaml     # ROS 2 示例的同义 ROS 1 移植版（跨 repo 对齐）
-│       └── custom/             # 我们的相机配置（ROS 1 参数格式）
-│           ├── none.yaml        # 空文件 = stock 上游默认（默认）
-│           └── usb2.yaml        # USB 2 回退（640x480@15 + depth 480x270@15）
-├── launch/
-│   └── rs_camera_config.launch # wrapper：include 原厂 rs_aligned_depth.launch + 可选 config_file: 加载器
+│       ├── custom/             # 我们的相机配置（ROS 1 参数格式）
+│       │   ├── none.yaml        # 空文件 = stock 上游默认（默认）
+│       │   └── usb2.yaml        # USB 2 回退（640x480@15 + depth 480x270@15）
+│       └── launch/             # 相机 launch 分层（baked 到 /）
+│           ├── rs_camera_config.launch  # 我们的 config：include 原厂 + config_file/initial_reset（immutable）
+│           ├── rs_camera.launch         # entrypoint 跑的文件：include 我们的 config（部署 bind-mount 盖这个做 remap）
+│           └── rs_camera_remap.example.launch  # 复制用 remap 范本（.example,对标 base 的 Dockerfile.example）
 ├── doc/
 │   ├── README.zh-TW.md          # 繁体中文
 │   ├── README.zh-CN.md          # 简体中文
