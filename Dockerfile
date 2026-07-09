@@ -259,7 +259,7 @@ COPY --chown="${USER}":"${GROUP}" --chmod=0755 "${CONFIG_SRC}" "${CONFIG_DIR}"
 
 # Copy RealSense udev rules
 RUN mkdir -p /etc/udev/rules.d
-COPY --chmod=0644 config/realsense/99-realsense-libusb.rules /etc/udev/rules.d/
+COPY --chmod=0644 config/realsense/official/99-realsense-libusb.rules /etc/udev/rules.d/
 
 USER "${USER}"
 
@@ -402,7 +402,7 @@ COPY --from=devel /opt/rs-stage/ /
 # runtime; folded with the udev-rules mkdir to avoid a consecutive-RUN lint.
 RUN ldconfig && \
     mkdir -p /etc/udev/rules.d
-COPY --chmod=0644 config/realsense/99-realsense-libusb.rules /etc/udev/rules.d/
+COPY --chmod=0644 config/realsense/official/99-realsense-libusb.rules /etc/udev/rules.d/
 
 COPY --chmod=0755 script/entrypoint.sh /entrypoint.sh
 

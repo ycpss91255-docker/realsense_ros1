@@ -12,7 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
-readonly RULES_SRC="${SCRIPT_DIR}/../config/realsense/99-realsense-libusb.rules"
+readonly RULES_SRC="${SCRIPT_DIR}/../config/realsense/official/99-realsense-libusb.rules"
 readonly RULES_DST="/etc/udev/rules.d/99-realsense-libusb.rules"
 
 usage() {
@@ -22,7 +22,7 @@ Usage: install_udev_rules.sh [-h|--help]
 Install the Intel RealSense udev rules onto the host so the camera enumerates
 with the permissions the container needs.
 
-Copies config/realsense/99-realsense-libusb.rules to /etc/udev/rules.d/ and
+Copies config/realsense/official/99-realsense-libusb.rules to /etc/udev/rules.d/ and
 runs `udevadm control --reload-rules && udevadm trigger`. Privileged steps use
 sudo when the script is not run as root.
 

@@ -335,7 +335,7 @@ Install them once on the host with the bundled script (uses `sudo`):
 ./script/install_udev_rules.sh
 ```
 
-It copies `config/realsense/99-realsense-libusb.rules` to `/etc/udev/rules.d/`
+It copies `config/realsense/official/99-realsense-libusb.rules` to `/etc/udev/rules.d/`
 and reloads udev. Re-plug the camera afterwards. The container itself runs in
 `privileged` mode with `/dev` mounted (see
 [doc/adr/00000001-realsense-requires-privileged.md](doc/adr/00000001-realsense-requires-privileged.md)).
@@ -386,18 +386,25 @@ depth drop to 15 fps, depth to 480x270, and the IR (`enable_infra1/2`) and IMU
 turned off. Aligned depth stays on. Validated on a Raspberry Pi 5 (arm64) whose
 USB 3 port fell back to USB 2.
 
-#### `official/` -- ROS 1 port of the ROS 2 example
+#### `official/` -- upstream-derived files
 
-ROS 1 `realsense-ros` ships **no config YAML upstream** (it exposes tuning only
-through `rs_*.launch` args), so unlike the ROS 2 sibling there is nothing
-official to vendor and no drift check. For cross-repo parity,
-`config/realsense/official/config.yaml` keeps a same-meaning **ROS 1 port** of
-the ROS 2 upstream example config, translated to ROS 1 param names
+`config/realsense/official/` holds the files derived from upstream, kept apart
+from our own `custom/` profiles:
+
+| File | Provenance | Drift check |
+|------|------------|-------------|
+| `99-realsense-libusb.rules` | vendored **verbatim** from the `librealsense` SDK's `config/99-realsense-libusb.rules` at the pinned `LIBREALSENSE_VERSION` | `script/check_udev_rules_sync.sh` |
+| `config.yaml` | a same-meaning **ROS 1 port** of the ROS 2 upstream example config (not verbatim -- ROS 1 realsense-ros ships no config YAML) | (none) |
+
+The udev rules are the host USB-access rules (see the section above); the
+Dockerfile also bakes them to `/etc/udev/rules.d/` inside the image.
+
+`config.yaml` is translated to ROS 1 param names
 (`rgb_camera.color_profile: 1280x720x15` -> `color_width/height/fps`,
-`align_depth.enable` -> `align_depth`, ...). The ROS 2-only `publish_tf` /
-`tf_publish_rate` keys are dropped -- ROS 1 realsense-ros publishes the static TF
-tree by default. It is not wired to any build arg; point `camera.yaml` at it (or
-`--build-arg CAMERA_CONFIG=config/realsense/official/config.yaml`) to use it.
+`align_depth.enable` -> `align_depth`, ...); the ROS 2-only `publish_tf` /
+`tf_publish_rate` keys are dropped (ROS 1 realsense-ros publishes the static TF
+tree by default). It is not wired to any build arg; point `camera.yaml` at it
+(or `--build-arg CAMERA_CONFIG=config/realsense/official/config.yaml`) to use it.
 
 ## Architecture
 
@@ -474,9 +481,9 @@ realsense_ros1/
 │   ├── shell/
 │   │   └── bashrc.d/10-ros-source.sh  # source ROS for interactive shells
 │   └── realsense/
-│       ├── 99-realsense-libusb.rules  # RealSense udev rules
-│       ├── official/           # ROS 1 port of the ROS 2 upstream example (no upstream drift-check)
-│       │   └── config.yaml     # same-meaning ROS 1 port, kept for cross-repo parity
+│       ├── official/           # upstream-derived: vendored udev rules + ROS 1 port config
+│       │   ├── 99-realsense-libusb.rules  # RealSense udev rules (vendored from librealsense SDK)
+│       │   └── config.yaml     # same-meaning ROS 1 port of the ROS 2 example (cross-repo parity)
 │       └── custom/             # our camera profiles (ROS 1 param form)
 │           ├── none.yaml        # EMPTY = stock upstream defaults (default)
 │           └── usb2.yaml        # USB 2 fallback (640x480@15 + depth 480x270@15)
