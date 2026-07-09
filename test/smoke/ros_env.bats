@@ -70,6 +70,20 @@ setup() {
     assert_output "roslaunch --wait pkg foo.launch"
 }
 
+@test "_ros_master_is_remote treats a global IPv6 master as remote (#79)" {
+    # The host parser must strip the [..] brackets before classifying; a global
+    # IPv6 literal like [fd00::5] is a remote master and must trigger --wait.
+    run bash -c 'export ROS_MASTER_URI=http://[fd00::5]:11311; source /entrypoint.sh; _ros_master_is_remote'
+    assert_success
+}
+
+@test "_ros_master_is_remote treats IPv6 loopback [::1] as local (#79)" {
+    # [::1] is loopback: roslaunch starts its own roscore, so injecting --wait
+    # would deadlock. The bracket-stripped host must classify as local.
+    run bash -c 'export ROS_MASTER_URI=http://[::1]:11311; source /entrypoint.sh; _ros_master_is_remote'
+    assert_failure
+}
+
 # -------------------- Entrypoint: remote-master watchdog --------------------
 #
 # On top of the boot gate (#79/#80), when the master is remote the entrypoint
@@ -142,6 +156,14 @@ setup() {
     assert_success
 }
 
+@test "realsense2_description discoverable via rospack" {
+    # realsense2_description is bundled in the realsense-ros repo, so the source
+    # build (#88) copies its share/ payload into the ROS prefix too; the wrapper
+    # launch (rs_aligned_depth.launch) loads the URDF from it.
+    run bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && rospack find realsense2_description"
+    assert_success
+}
+
 @test "librealsense2 SDK library present" {
     run bash -c "ls /usr/local/lib/librealsense2.so*"
     assert_success
@@ -188,6 +210,20 @@ setup() {
 @test "HOME is set and exists" {
     assert [ -n "${HOME}" ]
     assert [ -d "${HOME}" ]
+}
+
+@test "container user matches the configured USER_NAME (base v0.41.0 build contract)" {
+    # Regression guard: the Dockerfile must consume the USER_NAME / USER_UID /
+    # USER_GROUP / USER_GID build-args that base v0.41.0's compose + CI inject.
+    # If it falls back to the legacy default user, the container HOME diverges
+    # from compose's /home/${USER_NAME}/work mount and `just run` breaks.
+    # CONTAINER_EXPECTED_USER is set by the devel-test stage.
+    assert [ -n "${CONTAINER_EXPECTED_USER}" ]
+    assert_equal "$(id -un)" "${CONTAINER_EXPECTED_USER}"
+}
+
+@test "HOME path matches the container user" {
+    assert_equal "${HOME}" "/home/$(id -un)"
 }
 
 @test "Timezone is Asia/Taipei" {

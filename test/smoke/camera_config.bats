@@ -2,6 +2,7 @@
 
 setup() {
     load "${BATS_TEST_DIRNAME}/test_helper"
+    DOCKERFILE="/lint/Dockerfile"
 }
 
 # -------------------- Camera config wiring --------------------
@@ -56,4 +57,30 @@ setup() {
         echo "${CONFIGURED_ARGV[@]}"'
     assert_success
     assert_output "bash"
+}
+
+# -------------------- Wrapper launch + Dockerfile wiring --------------------
+#
+# The runtime CMD is `roslaunch /rs_camera_config.launch initial_reset:=true`,
+# so the wrapper launch must be baked into the image and the Dockerfile CMD must
+# reference it. The Dockerfile is at /lint/Dockerfile (devel-test stage).
+
+@test "wrapper launch is baked into the image (/rs_camera_config.launch exists)" {
+    # The runtime CMD depends on it; a missing COPY would leave the container
+    # exiting immediately on `just run`.
+    assert_file_exists "/rs_camera_config.launch"
+}
+
+@test "Dockerfile CMD launches the wrapper (/rs_camera_config.launch)" {
+    assert_file_exists "${DOCKERFILE}"
+    run grep -F 'CMD ["roslaunch", "/rs_camera_config.launch", "initial_reset:=true"]' "${DOCKERFILE}"
+    assert_success
+}
+
+@test "Dockerfile declares CAMERA_CONFIG and COPYs it to /camera_config.yaml" {
+    assert_file_exists "${DOCKERFILE}"
+    run grep -F 'ARG CAMERA_CONFIG="camera.yaml"' "${DOCKERFILE}"
+    assert_success
+    run grep -F 'COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml' "${DOCKERFILE}"
+    assert_success
 }

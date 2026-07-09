@@ -77,6 +77,22 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   guarded by 8 `ros_env.bats` tests. Interim reaping `wait`s on the direct
   roslaunch child only; grandchildren orphaned by a hard kill need a PID 1 init,
   deferred to the base `init` toggle.
+- Smoke-test coverage expanded from 45 to 65 repo-specific tests (103 total with
+  the shared base smoke). A new `test/smoke/dockerfile_guards.bats` pins the
+  static Dockerfile invariants that have no runtime surface: the `groupadd`
+  `${GROUP}`-vs-`${USER}` regression (#71), the `LIBREALSENSE_VERSION` /
+  `REALSENSE_ROS_VERSION` pins, the absence of any apt-installed
+  `realsense2-camera`/`-description` (#88 source build), and the runtime-test
+  wrapper-discovery + dual-lib-dir ldd scan. `camera_config.bats` now also
+  asserts the baked `/rs_camera_config.launch` and the Dockerfile `CMD` /
+  `CAMERA_CONFIG` wiring; `ros_env.bats` adds the `USER_NAME`/`HOME` build
+  contract, `realsense2_description` discovery, and the `_ros_master_is_remote`
+  IPv6 (`[fd00::5]` remote, `[::1]` local) branches; `install_udev_rules.bats`
+  adds the installer's bad-arg + missing-rules-file exits and drives
+  `check_udev_rules_sync.sh`'s drift / covered / offline-skip logic through a
+  `curl` PATH stub. The `devel-test` lint stage now also `COPY`s
+  `script/hooks/pre/build.sh` into `/lint/` so ShellCheck covers the pre-build
+  hook (the non-recursive `COPY script/*.sh` skipped it).
 
 ### Changed
 - The prebuilt `librealsense` SDK image is ROS-agnostic and keyed on the Ubuntu
