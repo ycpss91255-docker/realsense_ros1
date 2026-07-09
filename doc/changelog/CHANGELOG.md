@@ -30,9 +30,12 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the ROS 2 sibling, `config/realsense/official/config.yaml` holds a same-meaning
   ROS 1 port of the ROS 2 upstream example config (ROS 1 realsense-ros ships no
   config YAML of its own -- only launch args -- so there is nothing official to
-  vendor or drift-check). Our own profiles live in `config/realsense/custom/`;
-  the split and the wrapper-launch mechanism are documented in the repo README
-  (Camera Config section, with i18n).
+  vendor or drift-check). The vendored `99-realsense-libusb.rules` udev rules
+  (verbatim from the librealsense SDK, drift-checked by
+  `script/check_udev_rules_sync.sh`) also live under
+  `config/realsense/official/`. Our own profiles live in
+  `config/realsense/custom/`; the split and the wrapper-launch mechanism are
+  documented in the repo README (Camera Config section, with i18n).
 - `script/hooks/pre/build.sh` (base #440 pre-build hook): for a local
   `just build` / `./build.sh` (with `LIBREALSENSE_IMAGE` unset) it auto-builds
   `librealsense:local` from `docker/librealsense/Dockerfile` before the main
@@ -47,7 +50,7 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--target test` (`push: false`) as a gate BEFORE publishing, so a broken SDK
   image can never reach GHCR.
 - `script/check_udev_rules_sync.sh` (#88): a drift guard that flags when the
-  vendored `config/realsense/99-realsense-libusb.rules` is missing a device rule
+  vendored `config/realsense/official/99-realsense-libusb.rules` is missing a device rule
   the pinned librealsense SDK tag (`v2.55.1`) ships. Compares only the
   `SUBSYSTEMS==` rule lines (tolerating the vendored header comment + local
   extra device IDs) and is network-optional (offline runs skip with exit 0), so
