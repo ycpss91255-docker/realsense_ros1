@@ -310,6 +310,58 @@ udev 规则必须装在 **host**，而不仅仅是容器内。容器没有 `udev
 并重新加载 udev，之后请重新插拔相机。容器本身以 `privileged` 模式运行并挂载 `/dev`
 （见 [doc/adr/00000001-realsense-requires-privileged.md](adr/00000001-realsense-requires-privileged.md)）。
 
+### 相机配置（Camera Config）
+
+当前生效的相机 profile 由 repo 根目录的 `camera.yaml` **symlink** 选择（仿照
+`app/ros1_bridge` 的 `bridge.yaml`）。其默认目标是
+`config/realsense/custom/none.yaml`，一个**空文件**，因此 runtime image 会串流原厂
+上游默认（640x480x30）如同以往。Dockerfile 把 symlink 目标 COPY 成
+`/camera_config.yaml`；当该文件非空时，entrypoint 会在启动命令后追加
+`config_file:=/camera_config.yaml`，否则执行原本的 `CMD` 不变。
+
+启用 profile 可重指 symlink 或用 build arg：
+
+```bash
+ln -sf config/realsense/custom/usb2.yaml camera.yaml   # 启用 USB 2 profile
+ln -sf config/realsense/custom/none.yaml camera.yaml   # 回到原厂默认
+just build --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml
+```
+
+#### profile 如何套用（`rs_camera_config.launch`）
+
+ROS 1 `realsense-ros`（2.3.2）没有 `config_file` 参数，因此本 repo 自有一个薄
+wrapper launch，`launch/rs_camera_config.launch`（baked 成 `/rs_camera_config.launch`，
+即 runtime CMD）。它 `<include>` 原厂的 `realsense2_camera/rs_aligned_depth.launch`
+不做更改、把 `initial_reset` 设为 node 参数，并在传入非空的 `config_file:=` 时，于
+include **之后**用 `<rosparam command="load">` 把该 YAML 载入 node 私有 namespace。
+roslaunch 会在任何 node 启动前设定所有参数、后写入者胜出，因此 YAML 会覆盖 launch
+默认（用 `roslaunch --dump-params` 验证过）。YAML 内的参数使用 node 的扁平 ROS 1
+名称（`color_width`、`depth_fps`、`enable_infra1` ...），不是 ROS 2 的点式键。
+
+#### `custom/` -- 我们的 profile
+
+| 文件 | 用途 |
+|------|------|
+| `none.yaml` | 空（0 bytes）-- 原厂上游默认（640x480x30）。默认。 |
+| `usb2.yaml` | USB 2.x 后备：color 640x480@15、depth 480x270@15、对齐深度开启、IR + IMU 关闭。 |
+
+D435/D455 接 USB 2 连接时无法承载原厂的 640x480x30 color + depth（相机会协商连接
+但在 30 fps 下送出 **0 帧**），因此 `usb2.yaml` 把带宽缩到可塞进 480 Mbps 连接：
+color 与 depth 都降到 15 fps、depth 降到 480x270，并关闭连接无法负担的 IR
+（`enable_infra1/2`）与 IMU（`enable_gyro/accel`）流；对齐深度保持开启。已在 USB 3
+端口退回 USB 2 的 Raspberry Pi 5（arm64）上验证。
+
+#### `official/` -- ROS 2 示例的 ROS 1 移植版
+
+ROS 1 `realsense-ros` **上游不附 config YAML**（只通过 `rs_*.launch` 参数调整），因此
+不像 ROS 2 sibling 有官方文件可 vendored、也没有 drift-check。为与 ROS 2 对齐，
+`config/realsense/official/config.yaml` 保留一份 ROS 2 上游示例配置的**同义 ROS 1
+移植版**，翻成 ROS 1 参数名称（`rgb_camera.color_profile: 1280x720x15` ->
+`color_width/height/fps`、`align_depth.enable` -> `align_depth` ...）。ROS 2 专属的
+`publish_tf` / `tf_publish_rate` 已省略 -- ROS 1 realsense-ros 默认就会发布静态 TF
+树。它没有绑任何 build arg；把 `camera.yaml` 指向它（或
+`--build-arg CAMERA_CONFIG=config/realsense/official/config.yaml`）即可使用。
+
 ## 架构
 
 ### Docker 构建阶段图
@@ -344,7 +396,7 @@ graph TD
 | `devel` | `devel-base` | 出货的开发镜像（默认 CMD `bash`） |
 | `devel-test` | `devel` + `test-tools-stage` | Lint + smoke tests，构建后丢弃（临时性） |
 | `runtime-base` | `sys` | 精简基础（`sudo`） |
-| `runtime` | `runtime-base` | 出货的运行时镜像：RealSense 软件包 + udev 规则（默认 CMD `roslaunch realsense2_camera rs_aligned_depth.launch`） |
+| `runtime` | `runtime-base` | 出货的运行时镜像：RealSense 软件包 + udev 规则（默认 CMD `roslaunch /rs_camera_config.launch initial_reset:=true`，wrapper 内含 stock `rs_aligned_depth.launch`） |
 | `runtime-test` | `runtime` | runtime smoke，构建后丢弃（临时性） |
 
 ## Smoke Tests
@@ -383,11 +435,14 @@ realsense_ros1/
 │   ├── shell/
 │   │   └── bashrc.d/10-ros-source.sh  # 为交互式 shell source ROS
 │   └── realsense/
-│       ├── README.md            # 说明：ROS 1 上游不附 config YAML（无 drift-check）
 │       ├── 99-realsense-libusb.rules  # RealSense udev 规则
-│       └── custom/              # 我们的相机配置（ROS 1 参数格式）
+│       ├── official/           # ROS 2 上游示例的 ROS 1 移植版（无上游 drift-check）
+│       │   └── config.yaml     # 同义 ROS 1 移植版，为跨 repo 对齐而保留
+│       └── custom/             # 我们的相机配置（ROS 1 参数格式）
 │           ├── none.yaml        # 空文件 = stock 上游默认（默认）
 │           └── usb2.yaml        # USB 2 回退（640x480@15 + depth 480x270@15）
+├── launch/
+│   └── rs_camera_config.launch # wrapper：include 原厂 rs_aligned_depth.launch + 可选 config_file: 加载器
 ├── doc/
 │   ├── README.zh-TW.md          # 繁体中文
 │   ├── README.zh-CN.md          # 简体中文

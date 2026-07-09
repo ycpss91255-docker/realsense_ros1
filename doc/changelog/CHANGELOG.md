@@ -27,10 +27,12 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Default behaviour (empty `none.yaml`) is byte-identical to before; activate a
   profile by repointing the symlink or
   `--build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml`. For parity with
-  the ROS 2 sibling, `config/realsense/config.yaml` holds a same-meaning ROS 1
-  port of the ROS 2 upstream example config (ROS 1 realsense-ros ships no config
-  YAML of its own -- only launch args -- so there is nothing official to vendor
-  or drift-check); details in `config/realsense/README.md`.
+  the ROS 2 sibling, `config/realsense/official/config.yaml` holds a same-meaning
+  ROS 1 port of the ROS 2 upstream example config (ROS 1 realsense-ros ships no
+  config YAML of its own -- only launch args -- so there is nothing official to
+  vendor or drift-check). Our own profiles live in `config/realsense/custom/`;
+  the split and the wrapper-launch mechanism are documented in the repo README
+  (Camera Config section, with i18n).
 - `script/hooks/pre/build.sh` (base #440 pre-build hook): for a local
   `just build` / `./build.sh` (with `LIBREALSENSE_IMAGE` unset) it auto-builds
   `librealsense:local` from `docker/librealsense/Dockerfile` before the main
