@@ -110,7 +110,7 @@
 | `camera config is baked into the image` | `/camera_config.yaml` exists (baked from the `camera.yaml` symlink target) |
 | `default baked camera config is empty (stock upstream defaults)` | Default `none.yaml` is 0 bytes, so the stock CMD streams the upstream defaults |
 | `entrypoint leaves the stock CMD unchanged for an empty config` | `_apply_camera_config` keeps the original argv when `/camera_config.yaml` is empty |
-| `entrypoint rewrites roslaunch argv from a non-empty camera config` | A non-empty config becomes `rs_aligned_depth.launch` `key:=value` args (`color_width:=640`, ...) with `initial_reset:=true` |
+| `entrypoint appends config_file:= for a non-empty camera config` | A non-empty config appends `config_file:=/camera_config.yaml` to the `roslaunch /rs_camera_config.launch` argv (wrapper loads the profile) |
 | `entrypoint does not hijack a non-roslaunch command even with a config` | Non-`roslaunch` command (devel `bash`) is left unchanged even when a profile is baked |
 
 ## .base/test/smoke/script_help.bats

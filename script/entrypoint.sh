@@ -167,53 +167,27 @@ _watchdog_loop() {
 # defaults"). Activating a profile = repoint that symlink (or pass
 # --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml).
 #
-# ROS 1 realsense-ros (2.3.2) ships no config_file: rs_aligned_depth.launch
-# sets every stream param on the node via <param value="$(arg ...)"/>, so a
-# plain `rosparam load` into the node namespace would be OVERRIDDEN at launch.
-# The reliable channel is roslaunch args -- rs_aligned_depth.launch declares
-# and forwards each key (color_width, depth_fps, enable_infra1, ...) -- so we
-# translate the flat YAML into `key:=value` args and hand them to that launch.
+# ROS 1 realsense-ros (2.3.2) ships no config_file arg. The repo-owned wrapper
+# launch /rs_camera_config.launch (baked in by the Dockerfile) INCLUDES the
+# stock rs_aligned_depth.launch and adds one optional `config_file:=` arg that
+# rosparam-loads the YAML into the node namespace AFTER the include (the later
+# write wins, so it overrides the launch defaults). The runtime CMD already
+# targets that wrapper, so applying a profile is just appending the arg.
 CAMERA_CONFIG_FILE="/camera_config.yaml"
 
-# Emit `key:=value` roslaunch args (one per line) from the flat YAML at $1.
-# PyYAML ships with any ROS install (rosparam depends on it); booleans are
-# lower-cased so roslaunch parses them as bool.
-_camera_config_args() {
-  python3 - "$1" <<'PY'
-import sys
-import yaml
-
-with open(sys.argv[1]) as handle:
-    data = yaml.safe_load(handle) or {}
-
-for key, value in data.items():
-    if isinstance(value, bool):
-        value = str(value).lower()
-    print(f"{key}:={value}")
-PY
-}
-
-# Resolve the launch argv into CONFIGURED_ARGV. When the command is the
-# RealSense roslaunch AND a NON-empty /camera_config.yaml is baked in, rewrite
-# it to rs_aligned_depth.launch with the profile applied as args (keeping
-# initial_reset:=true, matching the stock CMD). Any other case -- an empty
-# config (the default), or a non-roslaunch command such as the devel `bash` --
-# leaves the argv untouched, so default behaviour is byte-identical to before.
+# Resolve the launch argv into CONFIGURED_ARGV. When the command is a roslaunch
+# AND a NON-empty /camera_config.yaml is baked in, append `config_file:=` so the
+# wrapper loads the profile. Any other case -- an empty config (the default), or
+# a non-roslaunch command such as the devel `bash` -- leaves the argv untouched,
+# so default behaviour is byte-identical to before.
 _apply_camera_config() {
   CONFIGURED_ARGV=("$@")
 
   [[ "${1:-}" == "roslaunch" ]] || return 0
   [[ -s "${CAMERA_CONFIG_FILE}" ]] || return 0
 
-  local args=()
-  local line
-  while IFS= read -r line; do
-    [[ -n "${line}" ]] && args+=("${line}")
-  done < <(_camera_config_args "${CAMERA_CONFIG_FILE}")
-
   printf 'Applying camera profile from %s\n' "${CAMERA_CONFIG_FILE}"
-  CONFIGURED_ARGV=(roslaunch realsense2_camera rs_aligned_depth.launch \
-    initial_reset:=true "${args[@]}")
+  CONFIGURED_ARGV=("$@" "config_file:=${CAMERA_CONFIG_FILE}")
 }
 
 # Only when executed as the entrypoint (not when a test sources this file):

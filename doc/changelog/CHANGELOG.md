@@ -16,17 +16,21 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   off for a USB 2 link). The Dockerfile bakes the symlink target into the image
   as `/camera_config.yaml` via `ARG CAMERA_CONFIG="camera.yaml"` +
   `COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml` (devel + runtime
-  stages). When that file is non-empty and the command is the RealSense
-  `roslaunch`, `script/entrypoint.sh` translates the flat YAML into
-  `rs_aligned_depth.launch` `key:=value` roslaunch args (ROS 1 realsense-ros
-  2.3.2 sets each stream param via `<param value="$(arg ...)"/>`, so a plain
-  `rosparam load` would be overridden -- args are the reliable channel) while
-  keeping `initial_reset:=true`. Default behaviour (empty `none.yaml`) is
-  byte-identical to before; activate a profile by repointing the symlink or
-  `--build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml`. Unlike the
-  ROS 2 sibling there is NO official config to vendor / drift-check: ROS 1
-  realsense-ros ships no config YAML (only launch args), noted in
-  `config/realsense/README.md`.
+  stages). A repo-owned wrapper launch, `launch/rs_camera_config.launch` (baked
+  in as `/rs_camera_config.launch`, the runtime CMD), `<include>`s the stock
+  `rs_aligned_depth.launch` unchanged and adds one optional `config_file:=` arg
+  that `rosparam`-loads the profile into the node namespace AFTER the include
+  (ROS 1 realsense-ros 2.3.2 has no `config_file`; the later write wins, so the
+  YAML overrides the launch defaults -- verified via `roslaunch --dump-params`).
+  When `/camera_config.yaml` is non-empty and the command is a `roslaunch`,
+  `script/entrypoint.sh` simply appends `config_file:=/camera_config.yaml`.
+  Default behaviour (empty `none.yaml`) is byte-identical to before; activate a
+  profile by repointing the symlink or
+  `--build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml`. For parity with
+  the ROS 2 sibling, `config/realsense/config.yaml` holds a same-meaning ROS 1
+  port of the ROS 2 upstream example config (ROS 1 realsense-ros ships no config
+  YAML of its own -- only launch args -- so there is nothing official to vendor
+  or drift-check); details in `config/realsense/README.md`.
 - `script/hooks/pre/build.sh` (base #440 pre-build hook): for a local
   `just build` / `./build.sh` (with `LIBREALSENSE_IMAGE` unset) it auto-builds
   `librealsense:local` from `docker/librealsense/Dockerfile` before the main

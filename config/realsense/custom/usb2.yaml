@@ -1,30 +1,12 @@
-# USB 2.x fallback profile (D435 / D455 on a USB 2 link).
-#
-# The RealSense stock defaults (640x480x30 color + depth) exceed the USB 2.1
-# bandwidth budget: the stream opens but delivers zero frames (topics stuck at
-# 0 Hz). This profile drops color to 640x480@15 and depth to 480x270@15, which
-# fits USB 2 and streams at ~15 fps with aligned depth on. IR + IMU are off to
-# stay within budget.
-#
-# ROS 1 realsense-ros (2.3.2) ships NO config yaml -- only rs_*.launch files
-# whose args are set on the node via <param value="$(arg ...)"/>. A plain
-# `rosparam load` into the node namespace is therefore OVERRIDDEN by those
-# <param> tags at launch, so the entrypoint feeds these keys to
-# rs_aligned_depth.launch as `key:=value` roslaunch args instead (that launch
-# declares and forwards every key below). Key names are the ROS 1 arg names
-# (color_width, depth_fps, enable_infra1, ...), NOT the ROS 2 dotted
-# color_profile form.
-#
-# Activate:  ln -sf config/realsense/custom/usb2.yaml camera.yaml
-#        or  just build --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml
-color_width: 640
+# USB 2.x fallback profile. Rationale in ../README.md.
+color_width: 640       # 640x480 color fits a USB 2 link
 color_height: 480
-color_fps: 15
-depth_width: 480
+color_fps: 15          # 30 fps delivers 0 frames on USB 2; 15 streams
+depth_width: 480       # depth dropped to 480x270 to fit USB 2 beside color
 depth_height: 270
 depth_fps: 15
 align_depth: true
-enable_infra1: false
+enable_infra1: false   # IR off to stay within USB 2 bandwidth
 enable_infra2: false
-enable_gyro: false
+enable_gyro: false     # IMU off to stay within USB 2 bandwidth
 enable_accel: false
