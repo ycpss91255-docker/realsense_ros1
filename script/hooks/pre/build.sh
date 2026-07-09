@@ -10,7 +10,7 @@
 # CI, main.yaml passes LIBREALSENSE_IMAGE=ghcr.io/.../librealsense:v2.55.1-focal
 # so buildx PULLS the prebuilt SDK. For a LOCAL `just build` / `./build.sh`
 # (LIBREALSENSE_IMAGE unset) there is no such image, so this hook builds it from
-# docker/librealsense/Dockerfile first -> the local build is self-contained and
+# docker/Dockerfile.librealsense first -> the local build is self-contained and
 # needs no GHCR access.
 #
 # Contract:
@@ -35,8 +35,8 @@ main() {
   local hook_dir repo_root sdk_context sdk_dockerfile
   hook_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
   repo_root="$(cd -- "${hook_dir}/../../.." && pwd -P)"
-  sdk_context="${repo_root}/docker/librealsense"
-  sdk_dockerfile="${sdk_context}/Dockerfile"
+  sdk_context="${repo_root}/docker"
+  sdk_dockerfile="${sdk_context}/Dockerfile.librealsense"
 
   # Pins default to the main Dockerfile's global ARGs; env-overridable.
   local ubuntu_codename="${UBUNTU_CODENAME:-focal}"

@@ -31,7 +31,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "docker/librealsense/**"
+      - "docker/Dockerfile.librealsense"
       - ".github/workflows/build-librealsense.yaml"
 
 permissions:
@@ -90,8 +90,8 @@ jobs:
       - name: Build and test SDK (publish gate)
         uses: docker/build-push-action@v7
         with:
-          context: docker/librealsense
-          file: docker/librealsense/Dockerfile
+          context: docker
+          file: docker/Dockerfile.librealsense
           platforms: ${{ matrix.platform }}
           target: test
           push: false
@@ -107,8 +107,8 @@ jobs:
         id: build
         uses: docker/build-push-action@v7
         with:
-          context: docker/librealsense
-          file: docker/librealsense/Dockerfile
+          context: docker
+          file: docker/Dockerfile.librealsense
           platforms: ${{ matrix.platform }}
           target: export
           build-args: |
