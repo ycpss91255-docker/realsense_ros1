@@ -71,6 +71,17 @@ setup() {
     assert_file_exists "/rs_camera_config.launch"
 }
 
+@test "wrapper launch is well-formed XML (roslaunch-parseable)" {
+    # Regression: a '--' (double hyphen) inside the header XML comment made
+    # roslaunch reject the file ("Invalid roslaunch XML syntax: not well-formed
+    # (invalid token)"), so the node relaunch-looped and never streamed -- yet
+    # the file-exists check above still passed. Parse it as XML to catch any
+    # malformed-launch regression at build time. python3 ships with ROS Noetic.
+    assert_file_exists "/rs_camera_config.launch"
+    run python3 -c "import xml.dom.minidom as m; m.parse('/rs_camera_config.launch')"
+    assert_success
+}
+
 @test "Dockerfile CMD launches the wrapper (/rs_camera_config.launch)" {
     assert_file_exists "${DOCKERFILE}"
     run grep -F 'CMD ["roslaunch", "/rs_camera_config.launch", "initial_reset:=true"]' "${DOCKERFILE}"

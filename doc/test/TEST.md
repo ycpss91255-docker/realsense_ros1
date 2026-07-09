@@ -1,6 +1,6 @@
 # TEST.md
 
-**103 tests** total.
+**104 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -113,7 +113,7 @@
 
 ## test/smoke/camera_config.bats
 
-### Camera config wiring (8)
+### Camera config wiring (9)
 
 | Test | Description |
 |------|-------------|
@@ -123,6 +123,7 @@
 | `entrypoint appends config_file:= for a non-empty camera config` | A non-empty config appends `config_file:=/camera_config.yaml` to the `roslaunch /rs_camera_config.launch` argv (wrapper loads the profile) |
 | `entrypoint does not hijack a non-roslaunch command even with a config` | Non-`roslaunch` command (devel `bash`) is left unchanged even when a profile is baked |
 | `wrapper launch is baked into the image (/rs_camera_config.launch exists)` | `/rs_camera_config.launch` exists (the runtime CMD depends on it) |
+| `wrapper launch is well-formed XML (roslaunch-parseable)` | Parses `/rs_camera_config.launch` as XML -- regression for the `--`-in-comment bug that made roslaunch reject it and the node relaunch-loop |
 | `Dockerfile CMD launches the wrapper (/rs_camera_config.launch)` | Dockerfile CMD is `roslaunch /rs_camera_config.launch initial_reset:=true` |
 | `Dockerfile declares CAMERA_CONFIG and COPYs it to /camera_config.yaml` | `ARG CAMERA_CONFIG="camera.yaml"` + `COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml` |
 

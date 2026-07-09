@@ -7,6 +7,15 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `launch/rs_camera_config.launch` failed to parse: a `--` (double hyphen) inside
+  the header XML comment is illegal in XML, so roslaunch rejected the file
+  ("Invalid roslaunch XML syntax: not well-formed (invalid token)") and the
+  runtime container relaunch-looped without ever bringing up the camera node.
+  The smoke suite only checked the file existed, not that it parsed. Removed the
+  `--`s and added a `test/smoke/camera_config.bats` regression that parses the
+  launch file as XML at build time.
+
 ### Added
 - Selectable camera config, modeled on the `app/ros1_bridge` `bridge.yaml`
   pattern. A repo-root `camera.yaml` symlink selects the active profile;
