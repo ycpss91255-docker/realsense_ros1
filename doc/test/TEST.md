@@ -1,6 +1,6 @@
 # TEST.md
 
-**83 tests** total.
+**103 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -13,7 +13,7 @@
 | `ROS 1 setup.bash can be sourced` | ROS 1 setup script sources without error |
 | `interactive shells source ROS (roslaunch on PATH via bashrc.d)` | `config/shell/bashrc.d/10-ros-source.sh` puts `roslaunch` on PATH for interactive shells |
 
-### Entrypoint: remote-master wait (5)
+### Entrypoint: remote-master wait (7)
 
 | Test | Description |
 |------|-------------|
@@ -22,6 +22,8 @@
 | `entrypoint does not inject --wait when ROS_MASTER_URI is unset (#79)` | Unset/empty master leaves `roslaunch` args unchanged |
 | `entrypoint passes non-roslaunch commands through unchanged (#79)` | Non-`roslaunch` command (e.g. `bash -c ...`) is not modified |
 | `entrypoint does not double-inject --wait when already present (#79)` | Existing `--wait` is not duplicated |
+| `_ros_master_is_remote treats a global IPv6 master as remote (#79)` | `http://[fd00::5]:11311` strips the brackets and classifies as remote |
+| `_ros_master_is_remote treats IPv6 loopback [::1] as local (#79)` | `http://[::1]:11311` classifies as local (no `--wait` deadlock) |
 
 ### Entrypoint: remote-master watchdog (8)
 
@@ -36,11 +38,12 @@
 | `watchdog node absent from rosnode list is unhealthy (#81)` | `_node_registered` returns unhealthy when the node is absent |
 | `watchdog stops the roslaunch child with SIGTERM, not SIGINT (#81)` | Regression guard: async child has SIGINT set to SIG_IGN, so the child is stopped with SIGTERM (not SIGINT) or `wait` hangs |
 
-### RealSense packages (2)
+### RealSense packages (3)
 
 | Test | Description |
 |------|-------------|
 | `realsense2_camera discoverable via rospack` | Source-built wrapper (#88) is on `ROS_PACKAGE_PATH` (`rospack find realsense2_camera`) |
+| `realsense2_description discoverable via rospack` | Bundled `realsense2_description` payload (#88) is on `ROS_PACKAGE_PATH` (`rospack find realsense2_description`) |
 | `librealsense2 SDK library present` | Self-built librealsense v2.55.1 landed at `/usr/local/lib/librealsense2.so*` (ROS-agnostic SDK) |
 
 ### Desktop GUI (devel) (1)
@@ -58,12 +61,14 @@
 | `sudo is available` | sudo command works |
 | `sudo passwordless works` | sudo runs without password |
 
-### System (6)
+### System (8)
 
 | Test | Description |
 |------|-------------|
 | `User is not root` | Container user is not root |
 | `HOME is set and exists` | HOME is set and directory exists |
+| `container user matches the configured USER_NAME (base v0.41.0 build contract)` | Image built as the injected `USER_NAME` (`CONTAINER_EXPECTED_USER`), not the legacy default user |
+| `HOME path matches the container user` | `HOME` equals `/home/$(id -un)` |
 | `Timezone is Asia/Taipei` | Timezone configured correctly |
 | `LANG is en_US.UTF-8` | LANG locale set |
 | `LC_ALL is en_US.UTF-8` | LC_ALL locale set |
@@ -83,7 +88,7 @@
 
 ## test/smoke/install_udev_rules.bats
 
-### install_udev_rules.sh (4)
+### install_udev_rules.sh (6)
 
 | Test | Description |
 |------|-------------|
@@ -91,8 +96,10 @@
 | `install_udev_rules.sh --help exits 0` | Help exits successfully |
 | `install_udev_rules.sh -h prints usage` | Help output contains "Usage:" |
 | `install_udev_rules.sh is executable` | Script carries the executable bit so the documented `./script/install_udev_rules.sh` works |
+| `install_udev_rules.sh rejects an unknown argument (non-zero + usage)` | Unknown arg exits non-zero and prints "Usage:" |
+| `install_udev_rules.sh fails when the rules file is absent` | Missing `RULES_SRC` exits 1 with a "not found" message before any privileged step |
 
-### check_udev_rules_sync.sh (4)
+### check_udev_rules_sync.sh (7)
 
 | Test | Description |
 |------|-------------|
@@ -100,10 +107,13 @@
 | `check_udev_rules_sync.sh --help exits 0` | Help exits successfully |
 | `check_udev_rules_sync.sh -h prints usage` | Help output contains "Usage:" |
 | `check_udev_rules_sync.sh is executable` | Drift-guard script carries the executable bit |
+| `check_udev_rules_sync.sh flags drift when upstream ships a rule the vendored file lacks` | Curl-stub sandbox: upstream-only rule -> exit 1 + "drift" |
+| `check_udev_rules_sync.sh passes when the vendored file covers upstream` | Curl-stub sandbox: vendored covers upstream -> exit 0 + "OK" |
+| `check_udev_rules_sync.sh skips (exit 0) when the fetch fails offline` | Curl-stub failure (offline) -> exit 0 + "skip" |
 
 ## test/smoke/camera_config.bats
 
-### Camera config wiring (5)
+### Camera config wiring (8)
 
 | Test | Description |
 |------|-------------|
@@ -112,6 +122,23 @@
 | `entrypoint leaves the stock CMD unchanged for an empty config` | `_apply_camera_config` keeps the original argv when `/camera_config.yaml` is empty |
 | `entrypoint appends config_file:= for a non-empty camera config` | A non-empty config appends `config_file:=/camera_config.yaml` to the `roslaunch /rs_camera_config.launch` argv (wrapper loads the profile) |
 | `entrypoint does not hijack a non-roslaunch command even with a config` | Non-`roslaunch` command (devel `bash`) is left unchanged even when a profile is baked |
+| `wrapper launch is baked into the image (/rs_camera_config.launch exists)` | `/rs_camera_config.launch` exists (the runtime CMD depends on it) |
+| `Dockerfile CMD launches the wrapper (/rs_camera_config.launch)` | Dockerfile CMD is `roslaunch /rs_camera_config.launch initial_reset:=true` |
+| `Dockerfile declares CAMERA_CONFIG and COPYs it to /camera_config.yaml` | `ARG CAMERA_CONFIG="camera.yaml"` + `COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml` |
+
+## test/smoke/dockerfile_guards.bats
+
+### Dockerfile static guards (7)
+
+| Test | Description |
+|------|-------------|
+| `groupadd new-group branch names the group after ${GROUP}, not ${USER} (#71)` | sys stage `groupadd` names the group after `${GROUP}` (not `${USER}`) |
+| `version ARGs are pinned, not floating (#88)` | `ARG LIBREALSENSE_VERSION="v2.55.1"` + `ARG REALSENSE_ROS_VERSION="2.3.2"` are concrete pins |
+| `no stage apt-installs the RealSense packages (#88 source build)` | No stage apt-installs `ros-${ROS_DISTRO}-realsense2-camera` / `-description` |
+| `runtime-test smoke asserts the wrapper is discoverable (#88)` | runtime-test RUN contains `rospack find realsense2_camera` |
+| `runtime-test ldd scan covers both the ROS lib dir and /usr/local (#88)` | runtime-test ldd scan spans `/opt/ros/${ROS_DISTRO}/lib` and `/usr/local/lib` |
+| `devel-test lints the pre-build hook (COPY into /lint scope, #88)` | Dockerfile COPYs `script/hooks/pre/build.sh` into `/lint/hooks-pre-build.sh` for shellcheck |
+| `pre-build hook no-ops when LIBREALSENSE_IMAGE is already set` | Hook exits 0 without building when `LIBREALSENSE_IMAGE` is set |
 
 ## .base/test/smoke/script_help.bats
 

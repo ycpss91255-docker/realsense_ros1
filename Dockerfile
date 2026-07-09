@@ -303,6 +303,10 @@ COPY Dockerfile /lint/Dockerfile
 # this stage. The repo's own script/*.sh are symlinks to those wrappers, so
 # `COPY script/*.sh /lint/` already dereferences and lints them.
 COPY script/*.sh /lint/
+# `COPY script/*.sh` is non-recursive, so the pre-build hook under
+# script/hooks/pre/ is not matched; COPY it in explicitly (flattened name) so
+# the /lint/*.sh shellcheck glob below covers it too.
+COPY script/hooks/pre/build.sh /lint/hooks-pre-build.sh
 COPY .base/script/docker/lib /lint/lib
 RUN shellcheck -S warning /lint/*.sh /lint/lib/*.sh
 WORKDIR /lint
