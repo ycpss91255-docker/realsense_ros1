@@ -7,6 +7,28 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- USB2/USB3 camera-profile presets under `config/realsense/yaml/custom/` (refs
+  #124). One file per color resolution at that resolution's max fps for the link;
+  aligned depth is always 1280x720 (the D455's highest depth resolution), capped
+  at 30 fps. IR and IMU are off in every profile. The `usb3_*` presets
+  (`1280x720p30fps`, `848x480p60fps`, `640x480p60fps`, `424x240p90fps`) were
+  verified with `rs-enumerate-devices` on a D455 over a USB 3 link. The `usb2_*`
+  presets (`1280x720p6fps`, `640x480p15fps`, `424x240p30fps`) are **UNVERIFIED**:
+  the USB 2 whitelist was not enumerated (the camera was on a USB 3 link), so
+  720p depth may exceed USB 2 bandwidth or not be offered -- verify on a real
+  USB 2 link.
+
+### Changed
+- Type-first restructure of `config/realsense/` (refs #124): YAML now lives under
+  `yaml/` (`yaml/official/config.yaml`, `yaml/custom/*.yaml`), launch files split
+  into `launch/internal/` (our two) and `launch/example/` (the copy-me remap
+  template), and the vendored udev rules moved to `udev/`. Baked image paths
+  (`/rs_camera_config.launch`, `/etc/udev/rules.d/...`, `/camera_config.yaml`) are
+  unchanged. The old `custom/usb2.yaml` (color 640x480@15 + depth 480x270@15) is
+  renamed `usb2_640x480p15fps.yaml` and its depth is now 1280x720@15 per the
+  "depth = highest resolution" rule, replacing the previously-verified 480x270.
+
 ### Fixed
 - `launch/rs_camera_config.launch` failed to parse: a `--` (double hyphen) inside
   the header XML comment is illegal in XML, so roslaunch rejected the file

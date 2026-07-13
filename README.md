@@ -335,7 +335,7 @@ Install them once on the host with the bundled script (uses `sudo`):
 ./script/install_udev_rules.sh
 ```
 
-It copies `config/realsense/official/99-realsense-libusb.rules` to `/etc/udev/rules.d/`
+It copies `config/realsense/udev/99-realsense-libusb.rules` to `/etc/udev/rules.d/`
 and reloads udev. Re-plug the camera afterwards. The container itself runs in
 `privileged` mode with `/dev` mounted (see
 [doc/adr/00000001-realsense-requires-privileged.md](doc/adr/00000001-realsense-requires-privileged.md)).
@@ -344,7 +344,7 @@ and reloads udev. Re-plug the camera afterwards. The container itself runs in
 
 The active camera profile is selected by the root `camera.yaml` **symlink**
 (modeled on `app/ros1_bridge`'s `bridge.yaml`). Its default target is
-`config/realsense/custom/none.yaml`, an **empty** file, so the runtime image
+`config/realsense/yaml/custom/none.yaml`, an **empty** file, so the runtime image
 streams the stock upstream default (640x480x30) exactly as before. The Dockerfile
 COPYs the symlink target to `/camera_config.yaml`; when that file is non-empty
 the entrypoint appends `config_file:=/camera_config.yaml` to the launch,
@@ -353,15 +353,15 @@ otherwise it runs the default `CMD` unchanged.
 Activate a profile either by repointing the symlink or per build:
 
 ```bash
-ln -sf config/realsense/custom/usb2.yaml camera.yaml   # activate USB 2 profile
-ln -sf config/realsense/custom/none.yaml camera.yaml   # back to stock defaults
-just build --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml
+ln -sf config/realsense/yaml/custom/usb2_640x480p15fps.yaml camera.yaml  # activate a USB 2 profile
+ln -sf config/realsense/yaml/custom/none.yaml camera.yaml   # back to stock defaults
+just build --build-arg CAMERA_CONFIG=config/realsense/yaml/custom/usb2_640x480p15fps.yaml
 ```
 
 #### How a profile is applied (`rs_camera_config.launch`)
 
 ROS 1 `realsense-ros` (2.3.2) has no `config_file` arg, so the repo owns a launch
-under `config/realsense/launch/`, `rs_camera_config.launch` (baked as
+under `config/realsense/launch/internal/`, `rs_camera_config.launch` (baked as
 `/rs_camera_config.launch`). It `<include>`s the stock
 `realsense2_camera/rs_aligned_depth.launch` unchanged, sets `initial_reset` as a
 node param, and -- when a non-empty `config_file:=` is passed -- `<rosparam
@@ -383,7 +383,7 @@ add nodes) **without editing the image and without env vars**:
 | `/rs_camera_remap.example.launch` | copy-me template: `<remap>`s + `<include>` our config |
 
 To remap outputs (e.g. a downstream that wants `/camera_image_raw`): copy
-`config/realsense/launch/rs_camera_remap.example.launch`, edit the two
+`config/realsense/launch/example/rs_camera_remap.example.launch`, edit the two
 `<remap>` lines, and bind-mount your copy over `/rs_camera.launch` via
 `config/docker/setup.conf`:
 
@@ -400,30 +400,42 @@ at `roslaunch` (no fallback); `xmllint` your file before mounting. The shipped
 template is validated well-formed in CI; your edited copy is your
 responsibility. See [ADR 00000002](doc/adr/00000002-camera-launch-override-for-remap.md).
 
-#### `custom/` -- our profiles
+#### `yaml/custom/` -- our profiles
 
-| File | Purpose |
-|------|---------|
-| `none.yaml` | Empty (0 bytes) -- stock upstream defaults (640x480x30). Default. |
-| `usb2.yaml` | USB 2.x fallback: color 640x480@15, depth 480x270@15, aligned depth on, IR + IMU off. |
+Profiles live under `config/realsense/yaml/custom/`. Naming is
+`<link>_<WxH>p<fps>fps.yaml`: one file per color resolution at that resolution's
+max fps for the link. Depth is always 1280x720 (the D455's highest depth
+resolution), capped at 30 fps (720p depth's ceiling). IR (`enable_infra1/2`) and
+IMU (`enable_gyro/accel`) are off in every profile; aligned depth is on.
 
-A D435/D455 on a USB 2 link cannot sustain the stock 640x480x30 color + depth
-(the camera negotiates the link but delivers **0 frames** at 30 fps), so
-`usb2.yaml` trims bandwidth until the streams fit a 480 Mbps link: color and
-depth drop to 15 fps, depth to 480x270, and the IR (`enable_infra1/2`) and IMU
-(`enable_gyro/accel`) streams -- pure bandwidth the link cannot spare -- are
-turned off. Aligned depth stays on. Validated on a Raspberry Pi 5 (arm64) whose
-USB 3 port fell back to USB 2.
+| File | Color | Aligned depth |
+|------|-------|---------------|
+| `none.yaml` | Empty (0 bytes) -- stock upstream defaults (640x480x30). Default. | -- |
+| `usb3_1280x720p30fps.yaml` | 1280x720@30 | 1280x720@30 |
+| `usb3_848x480p60fps.yaml` | 848x480@60 | 1280x720@30 |
+| `usb3_640x480p60fps.yaml` | 640x480@60 | 1280x720@30 |
+| `usb3_424x240p90fps.yaml` | 424x240@90 | 1280x720@30 |
+| `usb2_1280x720p6fps.yaml` | 1280x720@6 | 1280x720@6 |
+| `usb2_640x480p15fps.yaml` | 640x480@15 | 1280x720@15 |
+| `usb2_424x240p30fps.yaml` | 424x240@30 | 1280x720@30 |
 
-#### `official/` -- upstream-derived files
+The `usb3_*` profiles were verified with `rs-enumerate-devices` on a D455 over a
+USB 3 link. The `usb2_*` profiles are **UNVERIFIED**: the USB 2 whitelist was
+never enumerated (the camera was on a USB 3 link), so 720p depth may exceed a 480
+Mbps link's bandwidth or not be offered at all -- verify each on a real USB 2 link
+before relying on it. A D435/D455 on a USB 2 link cannot sustain the stock
+640x480x30 color + depth (the camera negotiates the link but delivers **0
+frames** at 30 fps), which is why the `usb2_*` profiles drop fps and turn off IR
++ IMU.
 
-`config/realsense/official/` holds the files derived from upstream, kept apart
-from our own `custom/` profiles:
+#### `yaml/official/` + `udev/` -- upstream-derived files
+
+Files derived from upstream are kept apart from our own `yaml/custom/` profiles:
 
 | File | Provenance | Drift check |
 |------|------------|-------------|
-| `99-realsense-libusb.rules` | vendored **verbatim** from the `librealsense` SDK's `config/99-realsense-libusb.rules` at the pinned `LIBREALSENSE_VERSION` | `script/check_udev_rules_sync.sh` |
-| `config.yaml` | a same-meaning **ROS 1 port** of the ROS 2 upstream example config (not verbatim -- ROS 1 realsense-ros ships no config YAML) | (none) |
+| `udev/99-realsense-libusb.rules` | vendored **verbatim** from the `librealsense` SDK's `config/99-realsense-libusb.rules` at the pinned `LIBREALSENSE_VERSION` | `script/check_udev_rules_sync.sh` |
+| `yaml/official/config.yaml` | a same-meaning **ROS 1 port** of the ROS 2 upstream example config (not verbatim -- ROS 1 realsense-ros ships no config YAML) | (none) |
 
 The udev rules are the host USB-access rules (see the section above); the
 Dockerfile also bakes them to `/etc/udev/rules.d/` inside the image.
@@ -433,7 +445,7 @@ Dockerfile also bakes them to `/etc/udev/rules.d/` inside the image.
 `align_depth.enable` -> `align_depth`, ...); the ROS 2-only `publish_tf` /
 `tf_publish_rate` keys are dropped (ROS 1 realsense-ros publishes the static TF
 tree by default). It is not wired to any build arg; point `camera.yaml` at it
-(or `--build-arg CAMERA_CONFIG=config/realsense/official/config.yaml`) to use it.
+(or `--build-arg CAMERA_CONFIG=config/realsense/yaml/official/config.yaml`) to use it.
 
 ## Architecture
 
@@ -503,23 +515,33 @@ realsense_ros1/
 │   ├── setup.sh -> ../.base/script/docker/wrapper/setup.sh   # symlink
 │   ├── setup_tui.sh -> ../.base/script/docker/wrapper/setup_tui.sh  # symlink
 │   └── hooks/                   # pre/ + post/ wrapper hooks
-├── camera.yaml -> config/realsense/custom/none.yaml  # symlink (active camera profile; default = stock)
+├── camera.yaml -> config/realsense/yaml/custom/none.yaml  # symlink (active camera profile; default = stock)
 ├── config/
 │   ├── docker/
 │   │   └── setup.conf           # configuration surface (.env/compose.yaml generated from this)
 │   ├── shell/
 │   │   └── bashrc.d/10-ros-source.sh  # source ROS for interactive shells
-│   └── realsense/
-│       ├── official/           # upstream-derived: vendored udev rules + ROS 1 port config
-│       │   ├── 99-realsense-libusb.rules  # RealSense udev rules (vendored from librealsense SDK)
-│       │   └── config.yaml     # same-meaning ROS 1 port of the ROS 2 example (cross-repo parity)
-│       ├── custom/             # our camera profiles (ROS 1 param form)
-│       │   ├── none.yaml        # EMPTY = stock upstream defaults (default)
-│       │   └── usb2.yaml        # USB 2 fallback (640x480@15 + depth 480x270@15)
-│       └── launch/             # camera launch layers (baked to /)
-│           ├── rs_camera_config.launch  # our config: include official + config_file/initial_reset (immutable)
-│           ├── rs_camera.launch         # entrypoint target: include our config (deployment bind-mounts over this to remap)
-│           └── rs_camera_remap.example.launch  # copy-me remap template (.example, like base's Dockerfile.example)
+│   └── realsense/              # type-first layout: yaml / launch / udev
+│       ├── yaml/               # camera-profile + reference YAML
+│       │   ├── official/       # upstream-derived
+│       │   │   └── config.yaml # same-meaning ROS 1 port of the ROS 2 example (cross-repo parity)
+│       │   └── custom/         # our camera profiles (ROS 1 param form); none + USB2/USB3 presets
+│       │       ├── none.yaml               # EMPTY = stock upstream defaults (default)
+│       │       ├── usb3_1280x720p30fps.yaml  # verified on a D455 (USB 3)
+│       │       ├── usb3_848x480p60fps.yaml   # verified on a D455 (USB 3)
+│       │       ├── usb3_640x480p60fps.yaml   # verified on a D455 (USB 3)
+│       │       ├── usb3_424x240p90fps.yaml   # verified on a D455 (USB 3)
+│       │       ├── usb2_1280x720p6fps.yaml   # UNVERIFIED USB 2 (whitelist not enumerated)
+│       │       ├── usb2_640x480p15fps.yaml   # UNVERIFIED USB 2 (whitelist not enumerated)
+│       │       └── usb2_424x240p30fps.yaml   # UNVERIFIED USB 2 (whitelist not enumerated)
+│       ├── launch/             # camera launch layers (baked to /)
+│       │   ├── internal/       # our launches
+│       │   │   ├── rs_camera_config.launch  # our config: include official + config_file/initial_reset (immutable)
+│       │   │   └── rs_camera.launch         # entrypoint target: include our config (deployment bind-mounts over this to remap)
+│       │   └── example/
+│       │       └── rs_camera_remap.example.launch  # copy-me remap template (.example, like base's Dockerfile.example)
+│       └── udev/               # host USB-access rules
+│           └── 99-realsense-libusb.rules  # RealSense udev rules (vendored from librealsense SDK)
 ├── doc/
 │   ├── README.zh-TW.md          # Traditional Chinese
 │   ├── README.zh-CN.md          # Simplified Chinese
