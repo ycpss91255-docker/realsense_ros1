@@ -3,7 +3,7 @@
 # Guard: the vendored RealSense udev rules must not drift below the pinned
 # librealsense SDK tag.
 #
-# config/realsense/official/99-realsense-libusb.rules is a vendored copy of the SDK's
+# config/realsense/udev/99-realsense-libusb.rules is a vendored copy of the SDK's
 # own config/99-realsense-libusb.rules. It is needed on the *host* (outside
 # Docker, where there is no udevd) so the container user can open the raw USB
 # node -- see script/install_udev_rules.sh. This repo is frozen at librealsense
@@ -20,14 +20,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
-readonly RULES_LOCAL="${SCRIPT_DIR}/../config/realsense/official/99-realsense-libusb.rules"
+readonly RULES_LOCAL="${SCRIPT_DIR}/../config/realsense/udev/99-realsense-libusb.rules"
 readonly DEFAULT_LIBREALSENSE_VERSION="v2.55.1"
 
 usage() {
   cat >&2 <<'EOF'
 Usage: check_udev_rules_sync.sh [-h|--help] [VERSION]
 
-Verify that config/realsense/official/99-realsense-libusb.rules contains every device
+Verify that config/realsense/udev/99-realsense-libusb.rules contains every device
 rule shipped by the pinned librealsense SDK tag's config/99-realsense-libusb.rules.
 
 VERSION is the librealsense git tag to compare against (e.g. v2.55.1). It may

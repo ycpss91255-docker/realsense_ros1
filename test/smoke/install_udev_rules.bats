@@ -40,7 +40,7 @@ setup() {
 }
 
 @test "install_udev_rules.sh fails when the rules file is absent" {
-    # /lint/ has no sibling config/realsense/official tree, so RULES_SRC resolves
+    # /lint/ has no sibling config/realsense/udev tree, so RULES_SRC resolves
     # to an absent path and main() must exit 1 with a clear message before any
     # privileged step.
     run bash /lint/install_udev_rules.sh
@@ -80,11 +80,11 @@ _sync_sandbox() {
     local vendored="$1"
     SANDBOX="${BATS_TEST_TMPDIR}/sync"
     mkdir -p "${SANDBOX}/script" \
-        "${SANDBOX}/config/realsense/official" \
+        "${SANDBOX}/config/realsense/udev" \
         "${SANDBOX}/bin"
     cp /lint/check_udev_rules_sync.sh "${SANDBOX}/script/check_udev_rules_sync.sh"
     printf '%s\n' "${vendored}" \
-        > "${SANDBOX}/config/realsense/official/99-realsense-libusb.rules"
+        > "${SANDBOX}/config/realsense/udev/99-realsense-libusb.rules"
     cat > "${SANDBOX}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 # Minimal curl stub: honour `-o <file>` and emit ${CURL_STUB_FIXTURE}; exit

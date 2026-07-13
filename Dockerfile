@@ -244,11 +244,11 @@ ARG CONFIG_SRC="config"
 COPY --chmod=0755 "./${ENTRYPOINT_FILE}" "/entrypoint.sh"
 
 # Baked-in camera profile. CAMERA_CONFIG points at the repo-root `camera.yaml`
-# symlink (default target config/realsense/custom/none.yaml, EMPTY = stock
+# symlink (default target config/realsense/yaml/custom/none.yaml, EMPTY = stock
 # upstream defaults); Docker COPY follows the symlink and bakes its TARGET's
 # content into /camera_config.yaml. The entrypoint applies it only when
 # non-empty, so the default devel image is unchanged. Override to bake a
-# profile: --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml.
+# profile: --build-arg CAMERA_CONFIG=config/realsense/yaml/custom/usb2_640x480p15fps.yaml.
 ARG CAMERA_CONFIG="camera.yaml"
 COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml
 # Camera launch, three layers (see config/realsense/launch/):
@@ -257,13 +257,13 @@ COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml
 #   /rs_camera.launch         entrypoint target -- includes our config, no remap.
 #                             A deployment bind-mounts its own over this to remap.
 #   /rs_camera_remap.example.launch  copy-me template (remap + include our config).
-COPY --chmod=0644 config/realsense/launch/rs_camera_config.launch config/realsense/launch/rs_camera.launch config/realsense/launch/rs_camera_remap.example.launch /
+COPY --chmod=0644 config/realsense/launch/internal/rs_camera_config.launch config/realsense/launch/internal/rs_camera.launch config/realsense/launch/example/rs_camera_remap.example.launch /
 COPY --chown="${USER}":"${GROUP}" --chmod=0755 .base/config "${CONFIG_DIR}"
 COPY --chown="${USER}":"${GROUP}" --chmod=0755 "${CONFIG_SRC}" "${CONFIG_DIR}"
 
 # Copy RealSense udev rules
 RUN mkdir -p /etc/udev/rules.d
-COPY --chmod=0644 config/realsense/official/99-realsense-libusb.rules /etc/udev/rules.d/
+COPY --chmod=0644 config/realsense/udev/99-realsense-libusb.rules /etc/udev/rules.d/
 
 USER "${USER}"
 
@@ -410,19 +410,19 @@ COPY --from=devel /opt/rs-stage/ /
 # runtime; folded with the udev-rules mkdir to avoid a consecutive-RUN lint.
 RUN ldconfig && \
     mkdir -p /etc/udev/rules.d
-COPY --chmod=0644 config/realsense/official/99-realsense-libusb.rules /etc/udev/rules.d/
+COPY --chmod=0644 config/realsense/udev/99-realsense-libusb.rules /etc/udev/rules.d/
 
 COPY --chmod=0755 script/entrypoint.sh /entrypoint.sh
 
 # Baked-in camera profile (see the devel stage for the full rationale). Default
 # CAMERA_CONFIG=camera.yaml -> empty none.yaml -> the stock CMD below streams the
-# upstream defaults; --build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml
+# upstream defaults; --build-arg CAMERA_CONFIG=config/realsense/yaml/custom/usb2_640x480p15fps.yaml
 # bakes a profile the entrypoint then applies to rs_aligned_depth.launch.
 ARG CAMERA_CONFIG="camera.yaml"
 COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml
 # Camera launch, three layers (see the devel stage / config/realsense/launch/):
 # our config (immutable) + the entrypoint target + the copy-me remap template.
-COPY --chmod=0644 config/realsense/launch/rs_camera_config.launch config/realsense/launch/rs_camera.launch config/realsense/launch/rs_camera_remap.example.launch /
+COPY --chmod=0644 config/realsense/launch/internal/rs_camera_config.launch config/realsense/launch/internal/rs_camera.launch config/realsense/launch/example/rs_camera_remap.example.launch /
 
 USER "${USER}"
 WORKDIR "${HOME}/work"

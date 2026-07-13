@@ -8,7 +8,7 @@ setup() {
 # -------------------- Camera config wiring --------------------
 #
 # The Dockerfile bakes the repo-root `camera.yaml` symlink's target into the
-# image as /camera_config.yaml (default target config/realsense/custom/none.yaml
+# image as /camera_config.yaml (default target config/realsense/yaml/custom/none.yaml
 # is EMPTY = stream the stock upstream defaults). The entrypoint appends
 # `config_file:=/camera_config.yaml` to the roslaunch argv only when that file
 # is NON-empty AND the command is roslaunch; the wrapper launch
@@ -61,7 +61,8 @@ setup() {
 
 # -------------------- Camera launch layers + Dockerfile wiring --------------------
 #
-# Three launch layers are baked at / (see config/realsense/launch/):
+# Three launch layers are baked at / (see config/realsense/launch/ -- internal/
+# holds our two, example/ the copy-me remap template):
 #   /rs_camera_config.launch          our config -- includes the stock
 #                                     rs_aligned_depth.launch + config_file/reset.
 #   /rs_camera.launch                 entrypoint target -- includes our config.
