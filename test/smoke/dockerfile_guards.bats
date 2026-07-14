@@ -75,7 +75,31 @@ setup() {
 
 @test "pre-build hook no-ops when LIBREALSENSE_IMAGE is already set" {
     # Contract: when the caller/CI already provides the SDK image, the hook does
-    # nothing and exits 0 (no local `docker build` of librealsense:local).
+    # nothing and exits 0 (no local `docker build` of the SDK image).
     run env LIBREALSENSE_IMAGE=x bash /lint/hooks-pre-build.sh
     assert_success
+}
+
+@test "local librealsense SDK tag is version-scoped (Dockerfile default + hook agree)" {
+    # A bare `librealsense:local` default lets ros1 (v2.55.1) and ros2 (v2.58.2)
+    # clobber one shared local tag, so a later local build silently FROMs the
+    # wrong-version SDK. The Dockerfile FROM default and the pre-build hook must
+    # both derive the SAME `librealsense:<version>-<codename>` tag.
+    assert_file_exists "${DOCKERFILE}"
+    run grep -F 'ARG LIBREALSENSE_IMAGE="librealsense:${LIBREALSENSE_VERSION}-${UBUNTU_CODENAME}"' "${DOCKERFILE}"
+    assert_success
+    run grep -F -- '-t "librealsense:${librealsense_version}-${ubuntu_codename}"' /lint/hooks-pre-build.sh
+    assert_success
+}
+
+@test "the bare librealsense:local tag is gone (a wrong version fails the build, not runs silently)" {
+    # Regression: with a bare tag a wrong/mismatched version is silent (the tag
+    # exists, holds the wrong SDK). Version-scoping makes a wrong/missing version a
+    # nonexistent tag, so FROM ${LIBREALSENSE_IMAGE} fails loudly -- docker resolves
+    # the missing tag to a docker.io pull that 404s and aborts the build.
+    assert_file_exists "${DOCKERFILE}"
+    run grep -F 'ARG LIBREALSENSE_IMAGE="librealsense:local"' "${DOCKERFILE}"
+    assert_failure
+    run grep -F -- '-t librealsense:local' /lint/hooks-pre-build.sh
+    assert_failure
 }

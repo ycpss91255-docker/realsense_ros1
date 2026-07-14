@@ -1,6 +1,6 @@
 # TEST.md
 
-**106 tests** total.
+**108 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -131,7 +131,7 @@
 
 ## test/smoke/dockerfile_guards.bats
 
-### Dockerfile static guards (7)
+### Dockerfile static guards (9)
 
 | Test | Description |
 |------|-------------|
@@ -142,6 +142,8 @@
 | `runtime-test ldd scan covers both the ROS lib dir and /usr/local (#88)` | runtime-test ldd scan spans `/opt/ros/${ROS_DISTRO}/lib` and `/usr/local/lib` |
 | `devel-test lints the pre-build hook (COPY into /lint scope, #88)` | Dockerfile COPYs `script/hooks/pre/build.sh` into `/lint/hooks-pre-build.sh` for shellcheck |
 | `pre-build hook no-ops when LIBREALSENSE_IMAGE is already set` | Hook exits 0 without building when `LIBREALSENSE_IMAGE` is set |
+| `local librealsense SDK tag is version-scoped (Dockerfile default + hook agree)` | Dockerfile `LIBREALSENSE_IMAGE` default and hook `-t` both derive `librealsense:${LIBREALSENSE_VERSION}-${UBUNTU_CODENAME}` |
+| `the bare librealsense:local tag is gone (a wrong version fails the build, not runs silently)` | No bare `librealsense:local` in the Dockerfile ARG default or the hook `-t` (a missing version fails the FROM) |
 
 ## .base/test/smoke/script_help.bats
 

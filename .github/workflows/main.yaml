@@ -44,7 +44,8 @@ jobs:
       # at a single platform (focal) and a single pin (v2.55.1), so the tag is a
       # static literal -- keep it in sync with the LIBREALSENSE_VERSION ARG in the
       # main Dockerfile and build-librealsense.yaml. Local builds omit this arg ->
-      # the Dockerfile default `librealsense:local` (built by
+      # the version-scoped Dockerfile default
+      # `librealsense:${LIBREALSENSE_VERSION}-${UBUNTU_CODENAME}` (built by
       # script/hooks/pre/build.sh).
       build_args: |
         ROS_DISTRO=${{ matrix.target.ros_distro }}
