@@ -39,6 +39,13 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `camera.yaml` at a preset (or the empty `none.yaml`) instead.
 
 ### Fixed
+- Version-scoped the local librealsense SDK image tag (refs #128, base#828): the
+  pre-build hook and the Dockerfile `LIBREALSENSE_IMAGE` default used a bare
+  `librealsense:local`, which ros1 (v2.55.1) and ros2 (v2.58.2) share -- building
+  one repo clobbered the other's local SDK image and a later build silently FROMed
+  the wrong-version SDK. Both now derive `librealsense:${LIBREALSENSE_VERSION}-${UBUNTU_CODENAME}`,
+  so the tags never collide and a wrong/missing version fails the `FROM` loudly
+  instead of running silently. Added two `dockerfile_guards.bats` regressions.
 - `launch/rs_camera_config.launch` failed to parse: a `--` (double hyphen) inside
   the header XML comment is illegal in XML, so roslaunch rejected the file
   ("Invalid roslaunch XML syntax: not well-formed (invalid token)") and the

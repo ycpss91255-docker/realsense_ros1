@@ -19,14 +19,16 @@ ARG LIBREALSENSE_VERSION="v2.55.1"
 # (instead of self-building the tools) is the template's canonical pattern
 # (Dockerfile.example); see the sibling app/realsense_ros2 for the same setup.
 ARG TEST_TOOLS_IMAGE="test-tools:local"
-# Prebuilt librealsense SDK image. Resolves to `librealsense:local` for the
-# local `just build` flow (the pre-build hook script/hooks/pre/build.sh
-# auto-builds it from docker/librealsense/Dockerfile when LIBREALSENSE_IMAGE is
-# unset) or to the multi-arch ghcr.io/ycpss91255-docker/librealsense:v2.55.1-focal
-# in CI (injected via build_args, so the FROM below pulls the prebuilt image
-# instead of recompiling librealsense). Same dual-source pattern as
-# TEST_TOOLS_IMAGE above; see the sibling app/realsense_ros2 for the same setup.
-ARG LIBREALSENSE_IMAGE="librealsense:local"
+# Prebuilt librealsense SDK image. Resolves to the version-scoped local tag
+# `librealsense:${LIBREALSENSE_VERSION}-${UBUNTU_CODENAME}` for the local `just
+# build` flow (the pre-build hook script/hooks/pre/build.sh auto-builds that tag
+# from docker/Dockerfile.librealsense when LIBREALSENSE_IMAGE is unset) or to the
+# multi-arch ghcr.io/ycpss91255-docker/librealsense:v2.55.1-focal in CI (injected
+# via build_args, so the FROM below pulls the prebuilt image instead of
+# recompiling). The version+codename scope stops ros1 (v2.55.1) and ros2
+# (v2.58.2) clobbering one shared local tag; a wrong/missing version then fails
+# the FROM loudly instead of silently reusing a stale SDK.
+ARG LIBREALSENSE_IMAGE="librealsense:${LIBREALSENSE_VERSION}-${UBUNTU_CODENAME}"
 
 ############################## rs_sdk ##############################
 # Prebuilt librealsense SDK (issue #88 / option B). Compiled ONCE by

@@ -5,9 +5,10 @@
 # Skipped when ./build.sh runs with --dry-run.
 #
 # Purpose: mirror build.sh's `test-tools:local` auto-build for the librealsense
-# SDK. The main Dockerfile FROMs `${LIBREALSENSE_IMAGE}` (default
-# `librealsense:local`) and COPYs the prebuilt librealsense trees out of it. In
-# CI, main.yaml passes LIBREALSENSE_IMAGE=ghcr.io/.../librealsense:v2.55.1-focal
+# SDK. The main Dockerfile FROMs `${LIBREALSENSE_IMAGE}` (default the version-
+# scoped `librealsense:${LIBREALSENSE_VERSION}-${UBUNTU_CODENAME}`) and COPYs the
+# prebuilt librealsense trees out of it. In CI, main.yaml passes
+# LIBREALSENSE_IMAGE=ghcr.io/.../librealsense:v2.55.1-focal
 # so buildx PULLS the prebuilt SDK. For a LOCAL `just build` / `./build.sh`
 # (LIBREALSENSE_IMAGE unset) there is no such image, so this hook builds it from
 # docker/Dockerfile.librealsense first -> the local build is self-contained and
@@ -15,7 +16,7 @@
 #
 # Contract:
 #   - LIBREALSENSE_IMAGE already set (caller/CI provides it) -> no-op, exit 0.
-#   - otherwise -> docker build -t librealsense:local from the SDK Dockerfile.
+#   - otherwise -> docker build -t librealsense:<version>-<codename> from the SDK.
 #
 # UBUNTU_CODENAME / LIBREALSENSE_VERSION default to the main Dockerfile's pins
 # (this repo is TERMINAL at focal / v2.55.1) and are env-overridable. The SDK is
@@ -48,11 +49,11 @@ main() {
     return 1
   fi
 
-  printf '[pre-build] building librealsense:local (UBUNTU_CODENAME=%s, LIBREALSENSE_VERSION=%s)\n' \
-    "${ubuntu_codename}" "${librealsense_version}" >&2
+  printf '[pre-build] building librealsense:%s-%s\n' \
+    "${librealsense_version}" "${ubuntu_codename}" >&2
 
   docker build \
-    -t librealsense:local \
+    -t "librealsense:${librealsense_version}-${ubuntu_codename}" \
     --build-arg "UBUNTU_CODENAME=${ubuntu_codename}" \
     --build-arg "LIBREALSENSE_VERSION=${librealsense_version}" \
     -f "${sdk_dockerfile}" \
