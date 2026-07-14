@@ -1,3 +1,5 @@
+**[English](CALIBRATION.md)** | **[繁體中文](CALIBRATION.zh-TW.md)** | **[简体中文](CALIBRATION.zh-CN.md)** | **[日本語](CALIBRATION.ja.md)**
+
 # RealSense Dynamic Calibration Tool
 
 This page describes the **Intel RealSense D400 Series Dynamic Calibration Tool**
@@ -136,6 +138,87 @@ What still helps (it will not reach zero):
 - Apply depth post-processing (spatial / temporal / hole-filling) *before* aligning.
 - Keep depth/colour synced and shoot static scenes to avoid rolling-shutter shift.
 - Stay within the camera's optimal depth range so depth is as accurate as possible.
+
+### Alignment direction: depth->color vs color->depth
+
+The two directions are **not symmetric** -- they are different algorithms, which is
+why the choice above matters (per Intel's *Projection, Texture-Mapping and
+Occlusion* whitepaper, section 3.4):
+
+- **Color->depth** (align color into the depth frame) is the cheap direction: for
+  each depth pixel, look up its uv-map coordinate and fetch the color there. Output
+  is at depth resolution, one lookup per pixel -- no holes.
+- **Depth->color** (align depth into the color frame -- what `align_depth:=true` /
+  `rs_aligned_depth.launch` produces) is "a bit trickier": a color pixel cannot be
+  easily de-projected back to 3D, so instead every depth pixel is
+  **forward-projected** into color coordinates, keeping the nearest depth when
+  several land on the same color pixel (z-buffering). If the color sensor is
+  higher-resolution than depth, some color pixels get no depth -> holes, which the
+  SDK papers over by splatting each depth pixel to a 2x2 patch.
+
+So the shipped default (`depth->color`) is the harder, approximation-prone
+direction -- the forward-projection + 2x2 hole-fill is part of why the residual is
+most visible as edge fringing. An application that can consume depth-resolution
+output avoids that class of artifact by choosing `color->depth`.
+
+## What the official documentation quantifies (and what it does not)
+
+Intel does **not** publish a depth<->color *alignment* error vs distance table. The
+closest official numbers are:
+
+- **Depth Z-accuracy (absolute error): +/-2%** -- D400-Series Datasheet
+  (337029-017) Table 4-15 "Depth Quality Specification", alongside Fill Rate >=99%,
+  RMS Error <=2%, Temporal Noise <=1%. The measurement distance differs by model:
+  the D43x spec is stated "<=2 m, 80% ROI, HD", the D450/D455 spec "<=4 m, 80% ROI,
+  HD". **This is a depth-accuracy spec, not an alignment-error spec** -- it bounds
+  how wrong the Z value is, which only *indirectly* feeds the deprojection into
+  color. There is no per-distance (1 m / 2 m / 3 m) breakdown.
+- **The alignment algorithm and its error sources** are described *qualitatively* in
+  the *Projection, Texture-Mapping and Occlusion* whitepaper: section 3.4 (stream
+  alignment -- the two directions above) and section 4 (occlusion invalidation --
+  at object boundaries one imager sees what the other cannot; SDK 2.35+
+  auto-invalidates these occluded regions during point-cloud calculation). It
+  explains *why* edge error exists but gives no measured magnitudes.
+
+Conclusion: the "1 m / 2 m / 3 m residual" numbers are **not available from Intel**
+-- they have to be measured in-house (see below).
+
+## Planned quantification experiment (deferred)
+
+Goal: turn the qualitative "worse on the D455 at 1--2 m" observation into a
+distance-vs-error table (error at 1 m / 2 m / 3 m).
+
+**Deferred (2026-07-03).** A trustworthy measurement needs a **stable, controlled
+setup**, and the only D455 currently available is mounted on a live AMR (running
+navigation stack) with an uncontrolled camera pose -- a production node, not a
+measurement rig. Run this once a dedicated, static setup is available.
+
+Design:
+
+- **Metric (primary): edge-offset.** Aim the camera at an object with a known
+  straight edge (a flat board, or a checkerboard). Measure the pixel offset between
+  the **depth edge** and the **color edge** in the aligned frame; convert to mm via
+  the depth Z and camera intrinsics. Matches the originally-observed edge fringing
+  and reads directly as "at 1 m the edge is off by X px / Y mm".
+- **Metric (optional, more rigorous): checkerboard reprojection.** Detect
+  checkerboard corners in color vs the corners deprojected from depth; report the
+  reprojection error (px / mm). Use if the numbers need to be defensible (report /
+  external).
+- **Alignment direction:** measure **depth->color** (`align_depth:=true`, the
+  shipped default) so the numbers correspond to what ships; optionally also
+  `color->depth` for comparison.
+- **Capture:** at each of 1 / 2 / 3 m (measured to the camera cover glass -- the
+  Ground-Zero reference, datasheet 4.8) record synchronized aligned depth+color,
+  static scene, camera off the robot. Apply depth post-processing (spatial /
+  temporal / hole-fill) *before* aligning, as in production.
+- **Controls:** run both D455 and D435 to reproduce the baseline-driven difference
+  (95 mm vs 50 mm). Target well-lit, no reflections, roughly filling the ROI.
+- **Output:** a distance-vs-error table + overlay screenshots, appended here.
+
+Prerequisite: the running container must actually publish
+`/camera/aligned_depth_to_color/image_raw`. A runtime image built before 2026-07-03
+defaults to the non-aligned `rs_camera.launch`; rebuild to pick up the new aligned
+default, or launch the alignment explicitly for the capture.
 
 ## Official references
 
