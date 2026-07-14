@@ -8,7 +8,7 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
-- USB2/USB3 camera-profile presets under `config/realsense/yaml/custom/` (refs
+- USB2/USB3 camera-profile presets under `config/realsense/yaml/` (refs
   #124). One file per color resolution at that resolution's max fps for the link;
   aligned depth is always 1280x720 (the D455's highest depth resolution), capped
   at 30 fps. IR and IMU are off in every profile. The `usb3_*` presets
@@ -20,14 +20,23 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   USB 2 link.
 
 ### Changed
-- Type-first restructure of `config/realsense/` (refs #124): YAML now lives under
-  `yaml/` (`yaml/official/config.yaml`, `yaml/custom/*.yaml`), launch files split
-  into `launch/internal/` (our two) and `launch/example/` (the copy-me remap
-  template), and the vendored udev rules moved to `udev/`. Baked image paths
+- Type-first restructure of `config/realsense/` (refs #124, #126, base#827): the
+  camera profiles live under `yaml/`, the two repo-owned launches under `launch/`,
+  the copy-me remap template at the component root
+  (`rs_camera_remap.example.launch`), and the vendored udev rules under `udev/`.
+  The audience sub-level (`yaml/custom/`, `yaml/official/`, `launch/internal/`,
+  `launch/example/`) is flattened away; ros1 has no drift guard tying code to
+  those sub-dirs, so the extra depth added only path noise. Baked image paths
   (`/rs_camera_config.launch`, `/etc/udev/rules.d/...`, `/camera_config.yaml`) are
-  unchanged. The old `custom/usb2.yaml` (color 640x480@15 + depth 480x270@15) is
-  renamed `usb2_640x480p15fps.yaml` and its depth is now 1280x720@15 per the
+  unchanged. The old `usb2.yaml` (color 640x480@15 + depth 480x270@15) is renamed
+  `usb2_640x480p15fps.yaml` and its depth is now 1280x720@15 per the
   "depth = highest resolution" rule, replacing the previously-verified 480x270.
+
+### Removed
+- Vestigial `yaml/official/config.yaml` (refs #126, base#827) -- a same-meaning
+  ROS 1 port of the ROS 2 upstream example config that no code referenced (ros1
+  has no drift guard for it) and that only duplicated the `yaml/` presets. Point
+  `camera.yaml` at a preset (or the empty `none.yaml`) instead.
 
 ### Fixed
 - `launch/rs_camera_config.launch` failed to parse: a `--` (double hyphen) inside
@@ -44,7 +53,7 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `config/realsense/launch/` (all baked to `/`): `rs_camera_config.launch` (our
   config -- includes the stock `rs_aligned_depth.launch` + config_file/reset,
   immutable), `rs_camera.launch` (the runtime CMD target -- `<include>`s our
-  config, no remap by default), and `examples/rs_camera_remap.example.launch`
+  config, no remap by default), and `rs_camera_remap.example.launch`
   (copy-me template). A deployment renames output topics (e.g. downstream wants
   `/camera_image_raw`) by copying the template, editing its `<remap>` lines, and
   bind-mounting the copy over `/rs_camera.launch` (`config/docker/setup.conf`
@@ -55,7 +64,7 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   launches). Runtime CMD is now `roslaunch /rs_camera.launch initial_reset:=true`.
 - Selectable camera config, modeled on the `app/ros1_bridge` `bridge.yaml`
   pattern. A repo-root `camera.yaml` symlink selects the active profile;
-  `config/realsense/custom/` holds our profiles (`none.yaml`, an EMPTY 0-byte
+  `config/realsense/yaml/` holds our profiles (`none.yaml`, an EMPTY 0-byte
   marker = stock upstream defaults 640x480x30, is the default target; and
   `usb2.yaml` = color 640x480@15 + depth 480x270@15, aligned depth on, IR/IMU
   off for a USB 2 link). The Dockerfile bakes the symlink target into the image
@@ -71,15 +80,11 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `script/entrypoint.sh` simply appends `config_file:=/camera_config.yaml`.
   Default behaviour (empty `none.yaml`) is byte-identical to before; activate a
   profile by repointing the symlink or
-  `--build-arg CAMERA_CONFIG=config/realsense/custom/usb2.yaml`. For parity with
-  the ROS 2 sibling, `config/realsense/official/config.yaml` holds a same-meaning
-  ROS 1 port of the ROS 2 upstream example config (ROS 1 realsense-ros ships no
-  config YAML of its own -- only launch args -- so there is nothing official to
-  vendor or drift-check). The vendored `99-realsense-libusb.rules` udev rules
-  (verbatim from the librealsense SDK, drift-checked by
-  `script/check_udev_rules_sync.sh`) also live under
-  `config/realsense/official/`. Our own profiles live in
-  `config/realsense/custom/`; the split and the wrapper-launch mechanism are
+  `--build-arg CAMERA_CONFIG=config/realsense/yaml/usb2_640x480p15fps.yaml`. Our
+  camera profiles live under `config/realsense/yaml/`; the vendored
+  `99-realsense-libusb.rules` udev rules (verbatim from the librealsense SDK,
+  drift-checked by `script/check_udev_rules_sync.sh`) live under
+  `config/realsense/udev/`. The layout and the wrapper-launch mechanism are
   documented in the repo README (Camera Config section, with i18n).
 - `script/hooks/pre/build.sh` (base #440 pre-build hook): for a local
   `just build` / `./build.sh` (with `LIBREALSENSE_IMAGE` unset) it auto-builds
@@ -95,7 +100,7 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--target test` (`push: false`) as a gate BEFORE publishing, so a broken SDK
   image can never reach GHCR.
 - `script/check_udev_rules_sync.sh` (#88): a drift guard that flags when the
-  vendored `config/realsense/official/99-realsense-libusb.rules` is missing a device rule
+  vendored `config/realsense/udev/99-realsense-libusb.rules` is missing a device rule
   the pinned librealsense SDK tag (`v2.55.1`) ships. Compares only the
   `SUBSYSTEMS==` rule lines (tolerating the vendored header comment + local
   extra device IDs) and is network-optional (offline runs skip with exit 0), so

@@ -1,8 +1,0 @@
-# ROS 1 port of the ROS 2 upstream example config. See README.md.
-enable_color: true
-color_width: 1280       # ROS 2: rgb_camera.color_profile 1280x720x15
-color_height: 720
-color_fps: 15
-enable_depth: true
-align_depth: true       # ROS 2: align_depth.enable
-enable_sync: true
