@@ -163,9 +163,9 @@ _watchdog_loop() {
 #
 # Baked-in camera profile. The Dockerfile COPYs the repo-root `camera.yaml`
 # symlink's TARGET into the image as /camera_config.yaml (default target
-# config/realsense/yaml/custom/none.yaml is EMPTY = "stream stock upstream
+# config/realsense/yaml/none.yaml is EMPTY = "stream stock upstream
 # defaults"). Activating a profile = repoint that symlink (or pass
-# --build-arg CAMERA_CONFIG=config/realsense/yaml/custom/usb2_640x480p15fps.yaml).
+# --build-arg CAMERA_CONFIG=config/realsense/yaml/usb2_640x480p15fps.yaml).
 #
 # ROS 1 realsense-ros (2.3.2) ships no config_file arg. The repo-owned wrapper
 # launch /rs_camera_config.launch (baked in by the Dockerfile) INCLUDES the

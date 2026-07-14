@@ -330,7 +330,7 @@ udev ルールはコンテナ内だけでなく **ホスト** にインストー
 
 有効なカメラ profile はリポジトリ直下の `camera.yaml` **symlink** で選択します
 （`app/ros1_bridge` の `bridge.yaml` に倣っています）。デフォルト対象は
-`config/realsense/yaml/custom/none.yaml` という**空ファイル**で、runtime image は従来どおり
+`config/realsense/yaml/none.yaml` という**空ファイル**で、runtime image は従来どおり
 標準の上流デフォルト（640x480x30）をストリームします。Dockerfile はリンク対象を
 `/camera_config.yaml` に COPY し、そのファイルが空でないとき entrypoint は起動コマンド
 に `config_file:=/camera_config.yaml` を追加します。空ならデフォルトの `CMD` のままです。
@@ -338,15 +338,15 @@ udev ルールはコンテナ内だけでなく **ホスト** にインストー
 profile を有効化するには symlink を張り替えるか build arg を使います：
 
 ```bash
-ln -sf config/realsense/yaml/custom/usb2_640x480p15fps.yaml camera.yaml   # USB 2 profile を有効化
-ln -sf config/realsense/yaml/custom/none.yaml camera.yaml   # 標準デフォルトへ戻す
-just build --build-arg CAMERA_CONFIG=config/realsense/yaml/custom/usb2_640x480p15fps.yaml
+ln -sf config/realsense/yaml/usb2_640x480p15fps.yaml camera.yaml   # USB 2 profile を有効化
+ln -sf config/realsense/yaml/none.yaml camera.yaml   # 標準デフォルトへ戻す
+just build --build-arg CAMERA_CONFIG=config/realsense/yaml/usb2_640x480p15fps.yaml
 ```
 
 #### profile の適用方法（`rs_camera_config.launch`）
 
 ROS 1 `realsense-ros`（2.3.2）には `config_file` 引数がないため、リポジトリは
-`config/realsense/launch/internal/` に `rs_camera_config.launch`（`/rs_camera_config.launch`
+`config/realsense/launch/` に `rs_camera_config.launch`（`/rs_camera_config.launch`
 として焼き込み）を持ちます。標準の `realsense2_camera/rs_aligned_depth.launch` を
 `<include>` し（変更なし）、`initial_reset` を node パラメータとして設定し、空でない
 `config_file:=` が渡されたとき include の**後**で `<rosparam command="load">` によって
@@ -368,7 +368,7 @@ launch は階層化されており、デプロイが **image を変えず・env 
 | `/rs_camera_remap.example.launch` | コピー用テンプレート:`<remap>` + 我々の config を `<include>` |
 
 出力を remap するには（例:下流が `/camera_image_raw` を要求）:
-`config/realsense/launch/example/rs_camera_remap.example.launch` をコピーし、2 つの
+`config/realsense/rs_camera_remap.example.launch` をコピーし、2 つの
 `<remap>` 行を編集し、`config/docker/setup.conf` でそのコピーを `/rs_camera.launch` に
 bind-mount します:
 
@@ -383,9 +383,9 @@ override は immutable な `/rs_camera_config.launch` を `<include>` する（b
 `xmllint` してください。同梱テンプレートは CI で構文検証されます;編集したコピーは
 自己責任です。[ADR 00000002](adr/00000002-camera-launch-override-for-remap.md) を参照。
 
-#### `yaml/custom/` -- 独自 profile
+#### `yaml/` -- 独自 profile
 
-profile は `config/realsense/yaml/custom/` に置かれます。命名は
+profile は `config/realsense/yaml/` に置かれます。命名は
 `<link>_<WxH>p<fps>fps.yaml`：color 解像度ごとに 1 ファイルで、その解像度における
 リンクの最大 fps を使います。depth は常に 1280x720（D455 の最高 depth 解像度）で
 30 fps 上限（720p depth の上限）です。IR（`enable_infra1/2`）と IMU
@@ -410,24 +410,14 @@ profile は `config/realsense/yaml/custom/` に置かれます。命名は
 できず（カメラはリンクをネゴシエートするが 30 fps では **0 フレーム**しか出さない）、
 これが `usb2_*` profile が fps を下げ IR + IMU をオフにする理由です。
 
-#### `yaml/official/` + `udev/` -- 上流由来のファイル
-
-上流由来のファイルは、独自の `yaml/custom/` profile とは分けて保持します：
+#### `udev/` -- 上流由来のファイル
 
 | ファイル | 由来 | ドリフトチェック |
 |----------|------|-------------------|
 | `udev/99-realsense-libusb.rules` | `librealsense` SDK の `config/99-realsense-libusb.rules`（ピン留め `LIBREALSENSE_VERSION`）から **verbatim** vendored | `script/check_udev_rules_sync.sh` |
-| `yaml/official/config.yaml` | ROS 2 上流サンプル設定の**同義 ROS 1 移植版**（verbatim ではない -- ROS 1 realsense-ros は上流に config YAML なし） | （なし） |
 
 udev ルールはホストの USB アクセスルールです（前節参照）；Dockerfile はこれをイメージ内の
 `/etc/udev/rules.d/` にも焼き込みます。
-
-`config.yaml` は ROS 1 パラメータ名に翻訳しています
-（`rgb_camera.color_profile: 1280x720x15` -> `color_width/height/fps`、
-`align_depth.enable` -> `align_depth` ...）；ROS 2 専用の `publish_tf` /
-`tf_publish_rate` は省略しています（ROS 1 realsense-ros はデフォルトで静的 TF ツリーを
-配信するため）。build arg には紐づいていません；`camera.yaml` をここに向けるか
-（または `--build-arg CAMERA_CONFIG=config/realsense/yaml/official/config.yaml`）で使えます。
 
 ## アーキテクチャ
 
@@ -495,31 +485,26 @@ realsense_ros1/
 │   ├── setup.sh -> ../.base/script/docker/wrapper/setup.sh   # シンボリックリンク
 │   ├── setup_tui.sh -> ../.base/script/docker/wrapper/setup_tui.sh  # シンボリックリンク
 │   └── hooks/                   # pre/ + post/ ラッパーフック
-├── camera.yaml -> config/realsense/yaml/custom/none.yaml  # symlink（有効なカメラ設定; デフォルトは stock）
+├── camera.yaml -> config/realsense/yaml/none.yaml  # symlink（有効なカメラ設定; デフォルトは stock）
 ├── config/
 │   ├── docker/
 │   │   └── setup.conf           # 設定サーフェス（.env/compose.yaml はここから生成）
 │   ├── shell/
 │   │   └── bashrc.d/10-ros-source.sh  # インタラクティブシェル向けに ROS を source
 │   └── realsense/              # type-first レイアウト：yaml / launch / udev
-│       ├── yaml/               # カメラ profile + 参照用 YAML
-│       │   ├── official/       # 上流由来
-│       │   │   └── config.yaml # ROS 2 サンプルの同義 ROS 1 移植版（クロスリポジトリ整合）
-│       │   └── custom/         # 独自のカメラ設定（ROS 1 パラメータ形式）；none + USB2/USB3 プリセット
-│       │       ├── none.yaml               # 空 = stock 上流デフォルト（デフォルト）
-│       │       ├── usb3_1280x720p30fps.yaml  # D455（USB 3）で検証済み
-│       │       ├── usb3_848x480p60fps.yaml   # D455（USB 3）で検証済み
-│       │       ├── usb3_640x480p60fps.yaml   # D455（USB 3）で検証済み
-│       │       ├── usb3_424x240p90fps.yaml   # D455（USB 3）で検証済み
-│       │       ├── usb2_1280x720p6fps.yaml   # USB 2 未検証（ホワイトリスト未列挙）
-│       │       ├── usb2_640x480p15fps.yaml   # USB 2 未検証（ホワイトリスト未列挙）
-│       │       └── usb2_424x240p30fps.yaml   # USB 2 未検証（ホワイトリスト未列挙）
+│       ├── rs_camera_remap.example.launch  # コピー用 remap テンプレート（.example、base の Dockerfile.example に対応）
+│       ├── yaml/               # 独自のカメラ profile（ROS 1 パラメータ形式）；none + USB2/USB3 プリセット
+│       │   ├── none.yaml               # 空 = stock 上流デフォルト（デフォルト）
+│       │   ├── usb3_1280x720p30fps.yaml  # D455（USB 3）で検証済み
+│       │   ├── usb3_848x480p60fps.yaml   # D455（USB 3）で検証済み
+│       │   ├── usb3_640x480p60fps.yaml   # D455（USB 3）で検証済み
+│       │   ├── usb3_424x240p90fps.yaml   # D455（USB 3）で検証済み
+│       │   ├── usb2_1280x720p6fps.yaml   # USB 2 未検証（ホワイトリスト未列挙）
+│       │   ├── usb2_640x480p15fps.yaml   # USB 2 未検証（ホワイトリスト未列挙）
+│       │   └── usb2_424x240p30fps.yaml   # USB 2 未検証（ホワイトリスト未列挙）
 │       ├── launch/             # カメラ launch 階層（/ に焼き込み）
-│       │   ├── internal/       # 我々の launch
-│       │   │   ├── rs_camera_config.launch  # 我々の config：official + config_file/initial_reset を include（immutable）
-│       │   │   └── rs_camera.launch         # entrypoint が実行：我々の config を include（デプロイはこれに bind-mount して remap）
-│       │   └── example/
-│       │       └── rs_camera_remap.example.launch  # コピー用 remap テンプレート（.example、base の Dockerfile.example に対応）
+│       │   ├── rs_camera_config.launch  # 我々の config：rs_aligned_depth + config_file/initial_reset を include（immutable）
+│       │   └── rs_camera.launch         # entrypoint が実行：我々の config を include（デプロイはこれに bind-mount して remap）
 │       └── udev/               # ホストの USB アクセスルール
 │           └── 99-realsense-libusb.rules  # RealSense udev ルール（librealsense SDK から vendored）
 ├── doc/
