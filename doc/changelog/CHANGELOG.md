@@ -20,6 +20,11 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   USB 2 link.
 
 ### Changed
+- The `rs_camera_remap.example.launch` template now uses placeholder `to=` topic
+  names (`/your_downstream_color_topic` / `/your_downstream_depth_topic`) instead
+  of one deployment's real topic names, and the README (4 languages) remap example
+  drops the concrete name for a generic phrasing. A copy-me template should signal
+  "edit these", not bake a specific deployment's choice into git.
 - Type-first restructure of `config/realsense/` (refs #124, #126, base#827): the
   camera profiles live under `yaml/`, the two repo-owned launches under `launch/`,
   the copy-me remap template at the component root
