@@ -382,7 +382,7 @@ add nodes) **without editing the image and without env vars**:
 | `/rs_camera.launch` | the runtime CMD's target -- default just `<include>`s our config, no remap |
 | `/rs_camera_remap.example.launch` | copy-me template: `<remap>`s + `<include>` our config |
 
-To remap outputs (e.g. a downstream that wants `/camera_image_raw`): copy
+To remap outputs (e.g. a downstream that expects its own topic names): copy
 `config/realsense/rs_camera_remap.example.launch`, edit the two
 `<remap>` lines, and bind-mount your copy over `/rs_camera.launch` via
 `config/docker/setup.conf`:

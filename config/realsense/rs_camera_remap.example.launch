@@ -20,9 +20,10 @@
   <arg name="config_file"   default=""/>
   <arg name="initial_reset" default="true"/>
 
-  <!-- Edit these two topic names for your downstream. -->
-  <remap from="/$(arg camera)/color/image_raw"                 to="/camera_image_raw"/>
-  <remap from="/$(arg camera)/aligned_depth_to_color/image_raw" to="/camera_depth_image_raw"/>
+  <!-- Edit the two `to=` names for your downstream. These are PLACEHOLDERS, not
+       a real deployment's topic names. -->
+  <remap from="/$(arg camera)/color/image_raw"                 to="/your_downstream_color_topic"/>
+  <remap from="/$(arg camera)/aligned_depth_to_color/image_raw" to="/your_downstream_depth_topic"/>
 
   <include file="/rs_camera_config.launch">
     <arg name="camera"        value="$(arg camera)"/>

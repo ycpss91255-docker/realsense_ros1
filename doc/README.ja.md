@@ -367,7 +367,7 @@ launch は階層化されており、デプロイが **image を変えず・env 
 | `/rs_camera.launch` | runtime CMD が実行するファイル -- デフォルトは我々の config を `<include>` するだけ、remap なし |
 | `/rs_camera_remap.example.launch` | コピー用テンプレート:`<remap>` + 我々の config を `<include>` |
 
-出力を remap するには（例:下流が `/camera_image_raw` を要求）:
+出力を remap するには（例:下流が独自のトピック名を要求）:
 `config/realsense/rs_camera_remap.example.launch` をコピーし、2 つの
 `<remap>` 行を編集し、`config/docker/setup.conf` でそのコピーを `/rs_camera.launch` に
 bind-mount します:
