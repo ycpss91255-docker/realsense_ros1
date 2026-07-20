@@ -235,8 +235,9 @@ just run -t runtime
 
 When `.env` sets a remote `ROS_MASTER_URI`, the slave waits for the master
 automatically: the entrypoint launches with `roslaunch --wait`, which blocks
-until the master is reachable, then launches. Boot order no longer matters --
-the slave may start before the master (e.g. auto-started on boot) and still
+until the master is reachable, then launches. This **boot gate** has no timeout
+and no knob -- the wait is always infinite. Boot order no longer matters -- the
+slave may start before the master (e.g. auto-started on boot) and still
 registers cleanly once the master appears, instead of coming up as an
 unregistered zombie node.
 
@@ -259,6 +260,15 @@ WATCHDOG_TIMEOUT=5                        # per-query rosnode-list timeout, seco
 WATCHDOG_FAILURES=3                       # consecutive failures before restart (~45 s)
 WATCHDOG_ROSNODE=/camera/realsense2_camera  # node whose registration is the health signal
 ```
+
+**These are two independent phases.** The boot gate above waits for the master
+to *appear* (always infinite); the watchdog governs only *recovery after*
+launch. Its restart tolerance is a multiplication --
+`WATCHDOG_INTERVAL × WATCHDOG_FAILURES` (default `15 × 3 = 45 s`): how long the
+master may be gone before a relaunch, **not** a cap on the boot-gate wait.
+Widening it (e.g. `INTERVAL=10`, `FAILURES=60` -> 600 s / 10 min) only makes
+recovery more blip-immune -- it never limits how long the slave waits for a
+master to first appear.
 
 The defaults are biased toward blip-immunity (a master reboot is minutes of
 downtime, so a 1-2 s network blip must not trigger a restart). `just stop`
