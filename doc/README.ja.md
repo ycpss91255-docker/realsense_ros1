@@ -466,7 +466,7 @@ graph TD
 
 ## Smoke Tests
 
-ビルド時の自動テストは [TEST.md](test/TEST.md)、実機カメラでのテストは [CAMERA.md](CAMERA.md)、動的キャリブレーションツールは [CALIBRATION.md](CALIBRATION.md) を参照。
+ビルド時の自動テストは [TEST.md](test/TEST.md)、実機カメラでのテストは [CAMERA.ja.md](CAMERA.ja.md)、動的キャリブレーションツールは [CALIBRATION.ja.md](CALIBRATION.ja.md) を参照。
 
 ## ディレクトリ構成
 
@@ -520,8 +520,8 @@ realsense_ros1/
 │   ├── README.zh-CN.md          # 簡体字中国語
 │   ├── README.ja.md             # 日本語
 │   ├── adr/                     # アーキテクチャ決定記録（ADR）
-│   ├── CAMERA.md                # 実機カメラでの手動テスト
-│   ├── CALIBRATION.md           # 動的キャリブレーションツール解説
+│   ├── CAMERA.md                # 実機カメラでの手動テスト（+ .zh-TW/.zh-CN/.ja）
+│   ├── CALIBRATION.md           # 動的キャリブレーションツール解説（+ .zh-TW/.zh-CN/.ja）
 │   ├── changelog/CHANGELOG.md
 │   └── test/
 │       └── TEST.md              # ビルド時の自動 smoke テスト
