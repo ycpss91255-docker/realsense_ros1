@@ -542,8 +542,8 @@ realsense_ros1/
 │   ├── README.zh-CN.md          # Simplified Chinese
 │   ├── README.ja.md             # Japanese
 │   ├── adr/                     # Architecture Decision Records
-│   ├── CAMERA.md                # manual testing with a physical camera
-│   ├── CALIBRATION.md           # Dynamic Calibration Tool guide
+│   ├── CAMERA.md                # manual testing with a physical camera (+ .zh-TW/.zh-CN/.ja)
+│   ├── CALIBRATION.md           # Dynamic Calibration Tool guide (+ .zh-TW/.zh-CN/.ja)
 │   ├── changelog/CHANGELOG.md
 │   └── test/
 │       └── TEST.md              # automatic build-time smoke tests

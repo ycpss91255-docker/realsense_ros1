@@ -8,6 +8,12 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- i18n for `doc/CALIBRATION.md` and `doc/CAMERA.md` (refs #89): both docs now
+  ship in all four languages (`.zh-TW` / `.zh-CN` / `.ja`) with the same
+  language-switcher header the READMEs use, closing the gap where these two were
+  English-only. Sibling cross-links resolve within a language (the zh-TW
+  CALIBRATION links to the zh-TW CAMERA), and the READMEs (4 languages) now
+  point at the reader's own language version.
 - USB2/USB3 camera-profile presets under `config/realsense/yaml/` (refs
   #124). One file per color resolution at that resolution's max fps for the link;
   aligned depth is always 1280x720 (the D455's highest depth resolution), capped

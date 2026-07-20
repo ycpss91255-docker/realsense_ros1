@@ -445,7 +445,7 @@ graph TD
 
 ## Smoke Tests
 
-构建期自动测试详见 [TEST.md](test/TEST.md)；实机相机测试见 [CAMERA.md](CAMERA.md)；动态校正工具见 [CALIBRATION.md](CALIBRATION.md)。
+构建期自动测试详见 [TEST.md](test/TEST.md)；实机相机测试见 [CAMERA.zh-CN.md](CAMERA.zh-CN.md)；动态校正工具见 [CALIBRATION.zh-CN.md](CALIBRATION.zh-CN.md)。
 
 ## 目录结构
 
@@ -499,8 +499,8 @@ realsense_ros1/
 │   ├── README.zh-CN.md          # 简体中文
 │   ├── README.ja.md             # 日文
 │   ├── adr/                     # 架构决策记录（ADR）
-│   ├── CAMERA.md                # 实机相机手动测试
-│   ├── CALIBRATION.md           # 动态校正工具说明
+│   ├── CAMERA.md                # 实机相机手动测试（另有 .zh-TW/.zh-CN/.ja）
+│   ├── CALIBRATION.md           # 动态校正工具说明（另有 .zh-TW/.zh-CN/.ja）
 │   ├── changelog/CHANGELOG.md
 │   └── test/
 │       └── TEST.md              # 构建期自动 smoke 测试
