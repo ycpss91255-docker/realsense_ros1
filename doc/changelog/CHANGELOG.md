@@ -20,6 +20,15 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   USB 2 link.
 
 ### Changed
+- Docs (4 languages): the multi-machine README section now states the two
+  master-related behaviors are independent lifecycle phases (refs #84). The
+  **boot gate** (`roslaunch --wait`) is spelled out as having no timeout and no
+  knob -- the wait for the master to *appear* is always infinite. The
+  **watchdog** restart tolerance is now shown as the explicit multiplication
+  `WATCHDOG_INTERVAL × WATCHDOG_FAILURES` (default `15 × 3 = 45 s`) and clarified
+  to bound only *recovery after* launch, never the boot-gate wait -- so a wide
+  tolerance (e.g. 10 min) no longer reads as if it contradicts the infinite
+  boot-gate wait. Docs only; no behavior change.
 - The `rs_camera_remap.example.launch` template now uses placeholder `to=` topic
   names (`/your_downstream_color_topic` / `/your_downstream_depth_topic`) instead
   of one deployment's real topic names, and the README (4 languages) remap example
