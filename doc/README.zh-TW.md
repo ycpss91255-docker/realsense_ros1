@@ -235,15 +235,30 @@ WATCHDOG_ENABLED=1                        # 預設關閉；設為 1 啟用 watch
 WATCHDOG_INTERVAL=15                      # 每次檢查間隔（秒）
 WATCHDOG_TIMEOUT=5                        # 每次 rosnode list 查詢逾時（秒）
 WATCHDOG_FAILURES=3                       # 重啟前的連續失敗次數（~45 秒）
+WATCHDOG_STARTUP_DEADLINE=300             # phase-1 兜底：未曾註冊時經過幾秒後重啟
 WATCHDOG_ROSNODE=/camera/realsense2_camera  # 作為健康訊號的節點
 ```
 
-**這是兩個獨立的階段。** 上述 boot gate 等待 master *出現*（永遠無限）；watchdog
-只負責啟動*之後*的恢復。它的重啟容忍時間是一個乘法 --
-`WATCHDOG_INTERVAL × WATCHDOG_FAILURES`（預設 `15 × 3 = 45 秒`）：master 可以消失多久
-才觸發重啟，**不是** boot gate 等待時間的上限。把它調大（例如 `INTERVAL=10`、
-`FAILURES=60` -> 600 秒 / 10 分鐘）只會讓恢復更抗閃斷 -- 絕不會限制 slave 首次等待
-master 出現的時間。
+**這是兩個獨立的階段。** 上述 boot gate 等待 master *出現*（永遠無限 `--wait`）；watchdog
+只負責啟動*之後*的恢復。而 watchdog *內部*又依「被監看的節點自本次 launch 起是否*曾經*
+註冊過」分成兩個階段：
+
+- **啟動階段（尚未註冊）**：master 慢或節點還沒起來都屬正常，unreachable（查詢逾時）與
+  deregistered（消失）都*不計數*；只有 `WATCHDOG_STARTUP_DEADLINE`（預設 `300 秒`，自
+  launch 起算的秒數）到期才會強制重啟 -- 這是給「永遠註冊不上」（參數錯、節點 crash
+  loop）的兜底，讓啟動容忍度與相機初始化時間（隨平台而異）解耦。
+- **穩定階段（至少註冊過一次）**：
+  - *確定失聯*（master 有回應但節點消失，例如 master 重啟）-> 下一輪檢查就重啟，**不做
+    debounce**（再等也不會有新資訊）。
+  - 單純 *unreachable*（查詢逾時）-> 仍以 `WATCHDOG_FAILURES` 連續失敗次數（約
+    `WATCHDOG_INTERVAL × WATCHDOG_FAILURES`，預設 `15 × 3 = 45 秒`）做 debounce，以吸收
+    短暫的網路抖動。
+
+換言之，`WATCHDOG_INTERVAL × WATCHDOG_FAILURES` 的乘法容忍窗口**只**適用於 unreachable
+抖動的 debounce；確定失聯會在單一 `WATCHDOG_INTERVAL` 內就復原，不必等滿整個窗口。把
+`FAILURES` 調大（例如 `FAILURES=60` -> 約 600 秒 / 10 分鐘）只會讓 unreachable 更抗閃
+斷 -- 絕不會限制 slave 首次等待 master 出現的時間。`WATCHDOG_STARTUP_DEADLINE` 是兜底、
+不是調校參數：只要設得比任何正常啟動都長即可，且與 `WATCHDOG_INTERVAL` 解耦。
 
 預設值偏向抗閃斷（master 重啟通常是數分鐘的停機，因此 1-2 秒的網路閃斷不應觸發
 重啟）。`just stop` 會乾淨且快速地關閉 watchdog。watchdog 只對遠端 master 且啟動

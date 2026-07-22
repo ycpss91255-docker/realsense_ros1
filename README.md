@@ -258,17 +258,38 @@ WATCHDOG_ENABLED=1                        # off by default; 1 enables the watchd
 WATCHDOG_INTERVAL=15                      # seconds between checks
 WATCHDOG_TIMEOUT=5                        # per-query rosnode-list timeout, seconds
 WATCHDOG_FAILURES=3                       # consecutive failures before restart (~45 s)
+WATCHDOG_STARTUP_DEADLINE=300             # phase-1 backstop: seconds before a never-registered launch is restarted
 WATCHDOG_ROSNODE=/camera/realsense2_camera  # node whose registration is the health signal
 ```
 
-**These are two independent phases.** The boot gate above waits for the master
-to *appear* (always infinite); the watchdog governs only *recovery after*
-launch. Its restart tolerance is a multiplication --
-`WATCHDOG_INTERVAL × WATCHDOG_FAILURES` (default `15 × 3 = 45 s`): how long the
-master may be gone before a relaunch, **not** a cap on the boot-gate wait.
-Widening it (e.g. `INTERVAL=10`, `FAILURES=60` -> 600 s / 10 min) only makes
-recovery more blip-immune -- it never limits how long the slave waits for a
-master to first appear.
+**The boot gate and the watchdog are independent.** The boot gate above waits
+for the master to *appear* (always infinite `--wait`); the watchdog governs only
+*recovery after* launch. Nothing the watchdog does ever caps how long the slave
+waits for a master to first appear.
+
+**Within the watchdog itself, behavior depends on whether the node has *ever*
+registered since the current launch:**
+
+- **Startup (node not yet registered).** A slow master or a not-yet-up node is
+  expected here, so *neither* an unreachable master *nor* an absent node counts
+  as a failure. Only `WATCHDOG_STARTUP_DEADLINE` (default `300 s`, measured in
+  seconds since launch) forces a relaunch -- a backstop for a launch that never
+  registers *at all* (bad args, a crash-looping node). This decouples startup
+  tolerance from camera-init time, which is platform-dependent.
+- **Steady (node registered at least once).**
+  - A **confirmed deregistration** -- the master answered but the node is gone
+    (e.g. the master restarted) -- relaunches on the *next* check, with no
+    debounce; waiting produces no new information.
+  - A merely **unreachable master** (the query timed out) is still debounced by
+    `WATCHDOG_FAILURES` consecutive misses (about
+    `WATCHDOG_INTERVAL × WATCHDOG_FAILURES`, default `15 × 3 = 45 s`) to ride out
+    transient network blips.
+
+So the `INTERVAL × FAILURES` window applies **only** to the unreachable-master
+blip debounce; a confirmed master-churn deregistration recovers within a single
+`WATCHDOG_INTERVAL`. `WATCHDOG_STARTUP_DEADLINE` is a backstop, not a tuning knob
+-- it only needs to exceed any legitimate startup, and is decoupled from
+`INTERVAL`.
 
 The defaults are biased toward blip-immunity (a master reboot is minutes of
 downtime, so a 1-2 s network blip must not trigger a restart). `just stop`
