@@ -245,15 +245,33 @@ WATCHDOG_ENABLED=1                        # デフォルト無効；1 で watchd
 WATCHDOG_INTERVAL=15                      # チェック間隔（秒）
 WATCHDOG_TIMEOUT=5                        # rosnode list クエリごとのタイムアウト（秒）
 WATCHDOG_FAILURES=3                       # 再起動までの連続失敗回数（~45 秒）
+WATCHDOG_STARTUP_DEADLINE=300             # phase-1 の保険：未登録のまま何秒経過したら再起動するか
 WATCHDOG_ROSNODE=/camera/realsense2_camera  # ヘルスシグナルとなるノード
 ```
 
 **これらは 2 つの独立したフェーズです。** 上記の boot gate は master の*出現*を待ち
-（常に無限）、watchdog は起動*後*の復旧のみを担当します。その再起動許容時間は掛け算
-です -- `WATCHDOG_INTERVAL × WATCHDOG_FAILURES`（デフォルト `15 × 3 = 45 秒`）：master
-がどれだけ消えていたら再起動するか、であって boot gate の待機時間の上限**ではありません**。
-広げても（例: `INTERVAL=10`、`FAILURES=60` -> 600 秒 / 10 分）復旧がよりブリップ耐性に
-なるだけで、slave が master の初回出現を待つ時間を制限することは決してありません。
+（常に無限）、watchdog は起動*後*の復旧のみを担当します。さらに watchdog 自身も、
+監視対象ノードがこの launch 以降に*一度でも*登録されたかどうかで、内部的に 2 つの
+フェーズに分かれます。
+
+- **起動フェーズ（まだ未登録）：** master が遅い、ノードがまだ起動していないのは
+  正常なので、unreachable も deregistered もカウントしません。
+  `WATCHDOG_STARTUP_DEADLINE`（デフォルト 300 秒、launch からの経過秒数）だけが再起動を
+  強制します -- これは「いつまでも登録できない」（引数ミス、ノードの crash loop）に
+  対する保険です。これにより起動の許容時間がカメラ初期化時間（プラットフォーム依存）
+  から切り離されます。
+- **定常フェーズ（少なくとも一度は登録済み）：**
+  - **確定的な登録解除**（master は応答するがノードが消えている。例：master の再起動）
+    -> 次のチェックで再起動し、デバウンスしません（待っても新しい情報は得られません）。
+  - **単なる unreachable**（クエリのタイムアウト）-> 一時的なネットワークの揺らぎを
+    吸収するため、引き続き `WATCHDOG_FAILURES` 回の連続失敗（およそ
+    `WATCHDOG_INTERVAL × WATCHDOG_FAILURES`）でデバウンスします。
+
+**重要な訂正：** 既存の文章は watchdog の再起動許容度を `INTERVAL × FAILURES` と
+説明していましたが、これは現在 unreachable の揺らぎのデバウンスに**のみ**当てはまります。
+確定的な登録解除は単一の `INTERVAL` 内で復旧し、すべての失敗が 45 秒のウィンドウを待つ
+わけではありません。`WATCHDOG_STARTUP_DEADLINE` は保険であって調整用パラメータでは
+ありません -- 正常な起動より長ければよく、`INTERVAL` とは独立です。
 
 デフォルトはブリップ耐性重視です（master 再起動は数分のダウンなので、1-2 秒の
 ネットワークブリップで再起動してはならない）。`just stop` は watchdog をきれいかつ

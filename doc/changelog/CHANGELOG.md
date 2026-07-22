@@ -26,6 +26,16 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   USB 2 link.
 
 ### Changed
+- The remote-master watchdog now separates its startup wait from
+  post-registration failure detection (refs #136). Before the supervised node
+  has ever registered, only a new `WATCHDOG_STARTUP_DEADLINE` backstop (default
+  300 s) can trigger a relaunch, so startup tolerance is decoupled from
+  camera-init time. Once the node has registered at least once, a confirmed
+  deregistration (the master answered but the node is gone -- e.g. after the
+  master restarts) relaunches on the next check instead of waiting out the full
+  `WATCHDOG_FAILURES` window, while a merely unreachable master is still
+  debounced by `WATCHDOG_FAILURES`. Behavior in the entrypoint watchdog; opt-in,
+  default off.
 - Docs (4 languages): the multi-machine README section now states the two
   master-related behaviors are independent lifecycle phases (refs #84). The
   **boot gate** (`roslaunch --wait`) is spelled out as having no timeout and no

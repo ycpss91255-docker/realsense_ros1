@@ -52,19 +52,44 @@ _resolve_argv() {
 # `restart: unless-stopped` never fires. When the watchdog is enabled and the
 # master is remote we instead run a supervised-restart loop: (re)launch
 # `roslaunch --wait` as a child, poll node registration on the *current* master,
-# and after N consecutive failures kill roslaunch cleanly and relaunch (the
-# fresh `--wait` re-waits + re-registers). The loop/timing knobs are a generic
+# and restart roslaunch cleanly when the health signal says so (the fresh
+# `--wait` re-waits + re-registers). The loop/timing knobs are a generic
 # supervised-restart pattern (hence the generic WATCHDOG_* names); only the
 # health-check target (WATCHDOG_ROSNODE) is ROS-specific.
+#
+# Two-phase child lifecycle (#136), keyed on a `registered_once` flag (have we
+# EVER seen ourselves in `rosnode list` since this launch):
+#
+#   Phase 1 -- never registered (startup). The node may take a while to appear;
+#              a slow master or a not-yet-up node is expected, not a fault. So
+#              neither `unreachable` nor `deregistered` counts here -- ONLY a
+#              WATCHDOG_STARTUP_DEADLINE backstop (elapsed seconds since launch)
+#              can force a restart, catching a launch that never registers at
+#              all (bad args, crash-looping node).
+#
+#   Phase 2 -- registered at least once. A single `unreachable` tick may be a
+#              transient network blip, so it increments a WATCHDOG_FAILURES
+#              counter and only restarts once the counter reaches the max
+#              (debounce). A `deregistered` tick, by contrast, means the master
+#              answered but our node is gone (master churn) -- that restarts on
+#              the next tick with no debounce.
+#
+# The decision is factored into two pure, exhaustively-testable functions --
+# `_watchdog_probe` (query -> state) and `_watchdog_decide` (state + counters ->
+# action) -- so the loop is a thin shell owning only the mutable state.
 
 # Config env vars (all overridable via .env), with defaults:
-#   WATCHDOG_ENABLED   off by default; "1" enables (opt-in, consistent with base
-#                      `[lifecycle] restart = no`). Anything but "1" = off.
-#   WATCHDOG_INTERVAL  seconds between registration checks (15)
-#   WATCHDOG_TIMEOUT   per-query `rosnode list` timeout, seconds (5)
-#   WATCHDOG_FAILURES  consecutive failures before a restart (3)
-#   WATCHDOG_ROSNODE   node whose registration is the health signal
-#                      (/camera/realsense2_camera)
+#   WATCHDOG_ENABLED           off by default; "1" enables (opt-in, consistent
+#                              with base `[lifecycle] restart = no`). Anything
+#                              but "1" = off.
+#   WATCHDOG_INTERVAL          seconds between registration checks (15)
+#   WATCHDOG_TIMEOUT           per-query `rosnode list` timeout, seconds (5)
+#   WATCHDOG_FAILURES          consecutive `unreachable` ticks before a restart,
+#                              PHASE 2 ONLY (3)
+#   WATCHDOG_STARTUP_DEADLINE  phase-1 backstop: seconds since (re)launch after
+#                              which a never-registered child is restarted (300)
+#   WATCHDOG_ROSNODE           node whose registration is the health signal
+#                              (/camera/realsense2_camera)
 
 # Should the watchdog loop engage? Only when it is explicitly enabled AND the
 # command is roslaunch AND the master is remote. Any other combination falls
@@ -84,6 +109,89 @@ _node_registered() {
   local node="$1"
   local list_text="$2"
   grep -qxF -- "${node}" <<< "${list_text}"
+}
+
+# Run the registration query and classify its result into exactly one state.
+# Usage: _watchdog_probe <node> <query-cmd> [args...]
+# Classification is by EXIT CODE, not by empty output:
+#   query exits non-zero (timeout / master unreachable)  -> "unreachable"
+#   query exits 0 AND the node is in the list            -> "healthy"
+#   query exits 0 AND the node is NOT in the list        -> "deregistered"
+# The empty-list case matters: a master restarted on the same port answers
+# `rosnode list` successfully with an empty list -- that is `deregistered` (our
+# node is gone), not `unreachable`. The query command is passed in (loop calls
+# it with `timeout <t> rosnode list`) so tests can drive it with a fake rosnode.
+_watchdog_probe() {
+  local node="$1"
+  shift
+
+  local list_text=""
+  local exit_code=0
+  list_text="$("$@" 2>/dev/null)" || exit_code="$?"
+
+  if (( exit_code != 0 )); then
+    printf 'unreachable\n'
+  elif _node_registered "${node}" "${list_text}"; then
+    printf 'healthy\n'
+  else
+    printf 'deregistered\n'
+  fi
+}
+
+# Pure decision: map the probed state + the loop's mutable counters onto one of
+# three actions, echoed on stdout (no I/O, so it is exhaustively unit-testable):
+#   HEALTHY  the node is registered -> loop sets registered_once=1, failures=0
+#   RESTART  relaunch roslaunch cleanly
+#   WAIT     keep waiting this tick (the loop owns the failure-counter bump)
+# Usage:
+#   _watchdog_decide <state> <registered_once> <failures> <elapsed> \
+#     <max_failures> <startup_deadline>
+# Truth table (registered_once=0 is phase 1, =1 is phase 2):
+#   phase1 healthy                       -> HEALTHY (node first seen)
+#   phase1 unreachable/deregistered      -> elapsed <  deadline: WAIT
+#                                           elapsed >= deadline: RESTART
+#   phase2 healthy                       -> HEALTHY (reset failures)
+#   phase2 unreachable                   -> failures+1 <  max: WAIT
+#                                           failures+1 >= max: RESTART
+#   phase2 deregistered                  -> RESTART (no debounce)
+_watchdog_decide() {
+  local state="$1"
+  local registered_once="$2"
+  local failures="$3"
+  local elapsed="$4"
+  local max_failures="$5"
+  local startup_deadline="$6"
+
+  if [[ "${state}" == "healthy" ]]; then
+    printf 'HEALTHY\n'
+    return 0
+  fi
+
+  if (( registered_once == 0 )); then
+    # Phase 1: never registered. Neither unreachable nor deregistered counts;
+    # only the startup backstop can force a restart.
+    if (( elapsed >= startup_deadline )); then
+      printf 'RESTART\n'
+    else
+      printf 'WAIT\n'
+    fi
+    return 0
+  fi
+
+  # Phase 2: registered at least once.
+  if [[ "${state}" == "deregistered" ]]; then
+    # Master answered but our node is gone (master churn) -> restart next tick.
+    printf 'RESTART\n'
+    return 0
+  fi
+
+  # Phase 2 unreachable: debounce transient blips. This tick is the failures+1th
+  # consecutive failure; restart once that reaches the configured max.
+  if (( failures + 1 >= max_failures )); then
+    printf 'RESTART\n'
+  else
+    printf 'WAIT\n'
+  fi
 }
 
 # PID of the current roslaunch child, shared with the signal-forwarding trap.
@@ -118,6 +226,7 @@ _watchdog_loop() {
   local interval="${WATCHDOG_INTERVAL:-15}"
   local query_timeout="${WATCHDOG_TIMEOUT:-5}"
   local max_failures="${WATCHDOG_FAILURES:-3}"
+  local startup_deadline="${WATCHDOG_STARTUP_DEADLINE:-300}"
   local node="${WATCHDOG_ROSNODE:-/camera/realsense2_camera}"
 
   trap _watchdog_forward_signal TERM INT
@@ -126,13 +235,18 @@ _watchdog_loop() {
     roslaunch --wait "${@:2}" &
     _WATCHDOG_CHILD_PID="$!"
 
+    # Per-launch state, owned here and reset on every (re)launch: have we ever
+    # registered, the phase-2 blip counter, and seconds elapsed since launch.
+    local registered_once=0
     local failures=0
+    local elapsed=0
     while true; do
       # Sleep as a backgrounded child + `wait` so a signal arriving mid-sleep
       # runs the trap promptly (a foreground `sleep` would block the trap until
       # it returns, delaying shutdown).
       sleep "${interval}" &
       wait "$!" 2>/dev/null || true
+      elapsed=$((elapsed + interval))
 
       # roslaunch exited on its own -> reap and relaunch.
       if ! kill -0 "${_WATCHDOG_CHILD_PID}" 2>/dev/null; then
@@ -140,21 +254,36 @@ _watchdog_loop() {
         break
       fi
 
-      local list_text
-      if list_text="$(timeout "${query_timeout}" rosnode list 2>/dev/null)" \
-          && _node_registered "${node}" "${list_text}"; then
-        failures=0
-      else
-        failures=$((failures + 1))
-      fi
+      local state
+      state="$(_watchdog_probe "${node}" timeout "${query_timeout}" rosnode list)"
 
-      if (( failures >= max_failures )); then
-        # SIGTERM, not SIGINT: the child was started async (`&`), so its SIGINT
-        # is SIG_IGN (POSIX) and signalling it SIGINT would hang the next `wait`.
-        kill -TERM "${_WATCHDOG_CHILD_PID}" 2>/dev/null || true
-        wait "${_WATCHDOG_CHILD_PID}" 2>/dev/null || true
-        break
-      fi
+      local action
+      action="$(_watchdog_decide "${state}" "${registered_once}" "${failures}" \
+        "${elapsed}" "${max_failures}" "${startup_deadline}")"
+
+      case "${action}" in
+        HEALTHY)
+          # Node is present -> we are in (or entering) phase 2; clear the blip
+          # counter so a later transient does not carry stale failures.
+          registered_once=1
+          failures=0
+          ;;
+        RESTART)
+          # SIGTERM, not SIGINT: the child was started async (`&`), so its SIGINT
+          # is SIG_IGN (POSIX) and signalling it SIGINT would hang the next
+          # `wait`. The fresh `--wait` re-waits + re-registers on relaunch.
+          kill -TERM "${_WATCHDOG_CHILD_PID}" 2>/dev/null || true
+          wait "${_WATCHDOG_CHILD_PID}" 2>/dev/null || true
+          break
+          ;;
+        *)
+          # WAIT: only a phase-2 `unreachable` tick advances the debounce
+          # counter; phase-1 ticks lean on the startup deadline instead.
+          if (( registered_once == 1 )) && [[ "${state}" == "unreachable" ]]; then
+            failures=$((failures + 1))
+          fi
+          ;;
+      esac
     done
   done
 }
