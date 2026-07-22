@@ -1,6 +1,6 @@
 # TEST.md
 
-**108 tests** total.
+**120 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -37,6 +37,23 @@
 | `watchdog node present in rosnode list is healthy (#81)` | `_node_registered` returns healthy when the node is in the list text |
 | `watchdog node absent from rosnode list is unhealthy (#81)` | `_node_registered` returns unhealthy when the node is absent |
 | `watchdog stops the roslaunch child with SIGTERM, not SIGINT (#81)` | Regression guard: async child has SIGINT set to SIG_IGN, so the child is stopped with SIGTERM (not SIGINT) or `wait` hangs |
+
+### Entrypoint: watchdog probe + decision (12)
+
+| Test | Description |
+|------|-------------|
+| `watchdog probe classifies a listed node as healthy (#136)` | `_watchdog_probe`: query exits 0 with the node in the list -> `healthy` |
+| `watchdog probe classifies an empty list (exit 0) as deregistered (#136)` | Query exits 0 with an empty list (master restarted on the same port) -> `deregistered`, not `unreachable` (classified by exit code) |
+| `watchdog probe classifies a non-zero (timeout) query as unreachable (#136)` | Query exits non-zero (e.g. `timeout` -> 124) -> `unreachable` |
+| `watchdog decide: phase1 healthy marks the node registered (#136)` | `_watchdog_decide` phase 1 + `healthy` -> `HEALTHY` (loop sets registered_once) |
+| `watchdog decide: phase1 unreachable below the deadline waits (#136)` | Phase 1 + `unreachable`, `elapsed < deadline` -> `WAIT` (does not count) |
+| `watchdog decide: phase1 deregistered below the deadline waits (#136)` | Phase 1 + `deregistered`, `elapsed < deadline` -> `WAIT` (does not count) |
+| `watchdog decide: phase1 unreachable at the deadline restarts (#136)` | Phase 1 + `unreachable`, `elapsed >= deadline` -> `RESTART` (startup backstop) |
+| `watchdog decide: phase1 deregistered past the deadline restarts (#136)` | Phase 1 + `deregistered`, `elapsed >= deadline` -> `RESTART` (startup backstop) |
+| `watchdog decide: phase2 healthy resets and stays registered (#136)` | Phase 2 + `healthy` -> `HEALTHY` (loop resets the failure counter) |
+| `watchdog decide: phase2 unreachable below max failures waits (#136)` | Phase 2 + `unreachable`, `failures+1 < max` -> `WAIT` (blip debounce) |
+| `watchdog decide: phase2 unreachable reaching max failures restarts (#136)` | Phase 2 + `unreachable`, `failures+1 >= max` -> `RESTART` |
+| `watchdog decide: phase2 deregistered restarts on the next tick (#136)` | Phase 2 + `deregistered` -> `RESTART` (no debounce) |
 
 ### RealSense packages (3)
 

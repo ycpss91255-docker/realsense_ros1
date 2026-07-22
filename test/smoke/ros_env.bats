@@ -144,6 +144,133 @@ setup() {
     assert_success
 }
 
+# -------------------- Entrypoint: watchdog probe + decision --------------------
+#
+# The watchdog loop is a thin shell over two pure functions (#136):
+#
+#   _watchdog_probe  runs the `rosnode list` query and classifies the result by
+#                    EXIT CODE (not by empty output): non-zero (timeout /
+#                    unreachable) -> `unreachable`; exit 0 with our node in the
+#                    list -> `healthy`; exit 0 WITHOUT our node (a freshly
+#                    restarted master answers with an empty list) ->
+#                    `deregistered`. These tests drive it with a fake `rosnode`
+#                    on PATH so no live master is needed.
+#
+#   _watchdog_decide a pure (state, registered_once, failures, elapsed,
+#                    max_failures, startup_deadline) -> action mapping. Phase 1
+#                    (never registered) ignores the failure counter and only a
+#                    WATCHDOG_STARTUP_DEADLINE backstop can force a restart;
+#                    phase 2 (registered at least once) debounces `unreachable`
+#                    blips via the failure counter and restarts immediately on
+#                    `deregistered`. The full truth table is exercised below.
+
+@test "watchdog probe classifies a listed node as healthy (#136)" {
+    run bash -c '
+      dir="$(mktemp -d)"
+      cat >"${dir}/rosnode" <<EOF
+#!/usr/bin/env bash
+printf "%s\n" /rosout /camera/realsense2_camera
+EOF
+      chmod +x "${dir}/rosnode"
+      PATH="${dir}:${PATH}"
+      source /entrypoint.sh
+      _watchdog_probe /camera/realsense2_camera rosnode list
+    '
+    assert_success
+    assert_output "healthy"
+}
+
+@test "watchdog probe classifies an empty list (exit 0) as deregistered (#136)" {
+    # A master restarted on the same port answers `rosnode list` successfully
+    # but with an empty list -- that is `deregistered` (our node is gone), NOT
+    # `unreachable`. Classification is by exit code, not empty output.
+    run bash -c '
+      dir="$(mktemp -d)"
+      cat >"${dir}/rosnode" <<EOF
+#!/usr/bin/env bash
+exit 0
+EOF
+      chmod +x "${dir}/rosnode"
+      PATH="${dir}:${PATH}"
+      source /entrypoint.sh
+      _watchdog_probe /camera/realsense2_camera rosnode list
+    '
+    assert_success
+    assert_output "deregistered"
+}
+
+@test "watchdog probe classifies a non-zero (timeout) query as unreachable (#136)" {
+    # `timeout` kills a hung query with exit 124; any non-zero exit means the
+    # master is unreachable regardless of what was printed.
+    run bash -c '
+      dir="$(mktemp -d)"
+      cat >"${dir}/rosnode" <<EOF
+#!/usr/bin/env bash
+exit 124
+EOF
+      chmod +x "${dir}/rosnode"
+      PATH="${dir}:${PATH}"
+      source /entrypoint.sh
+      _watchdog_probe /camera/realsense2_camera rosnode list
+    '
+    assert_success
+    assert_output "unreachable"
+}
+
+@test "watchdog decide: phase1 healthy marks the node registered (#136)" {
+    run bash -c 'source /entrypoint.sh; _watchdog_decide healthy 0 0 0 3 300'
+    assert_success
+    assert_output "HEALTHY"
+}
+
+@test "watchdog decide: phase1 unreachable below the deadline waits (#136)" {
+    run bash -c 'source /entrypoint.sh; _watchdog_decide unreachable 0 0 30 3 300'
+    assert_success
+    assert_output "WAIT"
+}
+
+@test "watchdog decide: phase1 deregistered below the deadline waits (#136)" {
+    run bash -c 'source /entrypoint.sh; _watchdog_decide deregistered 0 0 30 3 300'
+    assert_success
+    assert_output "WAIT"
+}
+
+@test "watchdog decide: phase1 unreachable at the deadline restarts (#136)" {
+    run bash -c 'source /entrypoint.sh; _watchdog_decide unreachable 0 0 300 3 300'
+    assert_success
+    assert_output "RESTART"
+}
+
+@test "watchdog decide: phase1 deregistered past the deadline restarts (#136)" {
+    run bash -c 'source /entrypoint.sh; _watchdog_decide deregistered 0 0 305 3 300'
+    assert_success
+    assert_output "RESTART"
+}
+
+@test "watchdog decide: phase2 healthy resets and stays registered (#136)" {
+    run bash -c 'source /entrypoint.sh; _watchdog_decide healthy 1 2 400 3 300'
+    assert_success
+    assert_output "HEALTHY"
+}
+
+@test "watchdog decide: phase2 unreachable below max failures waits (#136)" {
+    run bash -c 'source /entrypoint.sh; _watchdog_decide unreachable 1 1 400 3 300'
+    assert_success
+    assert_output "WAIT"
+}
+
+@test "watchdog decide: phase2 unreachable reaching max failures restarts (#136)" {
+    run bash -c 'source /entrypoint.sh; _watchdog_decide unreachable 1 2 400 3 300'
+    assert_success
+    assert_output "RESTART"
+}
+
+@test "watchdog decide: phase2 deregistered restarts on the next tick (#136)" {
+    run bash -c 'source /entrypoint.sh; _watchdog_decide deregistered 1 0 400 3 300'
+    assert_success
+    assert_output "RESTART"
+}
+
 # -------------------- RealSense packages (source-built, #88) --------------------
 # The apt ros-${ROS_DISTRO}-realsense2-* packages were removed; librealsense
 # v2.55.1 (SDK) + the ros1-legacy realsense-ros 2.3.2 wrapper are built from
