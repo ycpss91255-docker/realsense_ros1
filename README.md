@@ -260,7 +260,18 @@ WATCHDOG_TIMEOUT=5                        # per-query rosnode-list timeout, seco
 WATCHDOG_FAILURES=3                       # consecutive failures before restart (~45 s)
 WATCHDOG_STARTUP_DEADLINE=300             # phase-1 backstop: seconds before a never-registered launch is restarted
 WATCHDOG_ROSNODE=/camera/realsense2_camera  # node whose registration is the health signal
+ADVERTISE_ASSERT_ENABLED=1                # ON by default; 0 disables the advertised-URI pre-flight assert
 ```
+
+`ADVERTISE_ASSERT_ENABLED` is **on by default** and scoped to the same case as
+the watchdog (a remote master launching `roslaunch`). Before launch it checks the
+address this node *would advertise* -- in ROS precedence order (`__hostname:=` ->
+`__ip:=` -> `ROS_HOSTNAME` -> `ROS_IP` -> `hostname`) -- and **exits non-zero**
+(no warn-and-continue) when that address resolves to loopback (e.g. the Debian
+`127.0.1.1` hostname trap) or does not resolve at all, since such a node
+registers on the master but is unreachable. Set `ADVERTISE_ASSERT_ENABLED=0` to
+bypass it -- only for deployments with real cross-host DNS, where a hostname is a
+legitimate off-box-resolvable advertised value.
 
 **The boot gate and the watchdog are independent.** The boot gate above waits
 for the master to *appear* (always infinite `--wait`); the watchdog governs only
@@ -311,6 +322,10 @@ rostopic hz /camera/color/image_raw      # data arriving from the camera machine
 > remote subscriber that cannot resolve that name sees the topic in `rostopic
 > list` but receives no data (the classic "list works, echo hangs" symptom).
 > Setting `ROS_IP` to the machine's LAN IP makes it advertise a routable address.
+> This container now **fails fast** on such a misconfiguration: for a remote
+> master, the entrypoint pre-flight blocks startup (non-zero exit) when the
+> advertised address resolves to loopback or is unresolvable, unless
+> `ADVERTISE_ASSERT_ENABLED=0`.
 
 Verified on a Raspberry Pi 5 (camera/slave) talking to a host master over a
 direct link: `/camera/color/image_raw` arrived at ~28 Hz on the master.

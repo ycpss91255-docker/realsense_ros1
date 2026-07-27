@@ -288,6 +288,149 @@ _watchdog_loop() {
   done
 }
 
+# ------------------- advertised-URI pre-flight assert (#137) ------------------
+#
+# The #79/#80 boot gate and the #81/#136 watchdog both assume the slave is
+# *reachable* once it registers. But a remote-master slave that advertises a
+# loopback or unresolvable address boots fine and registers, yet is invisible in
+# practice: peers read its URI from the master, dial 127.0.1.1 (the Debian
+# /etc/hosts bare-hostname trap) or an unresolvable name, and never connect --
+# the classic "`rostopic list` works, `rostopic echo` hangs" symptom, with no
+# error anywhere. This pre-flight blocks startup BEFORE roslaunch when the
+# address THIS node will advertise -- computed in ROS precedence order without a
+# live master -- resolves to loopback or does not resolve at all.
+#
+# Like the watchdog (#136) the decision is factored into small PURE functions
+# plus a thin impure orchestrator, so sourcing the entrypoint exercises the whole
+# path (a fake `getent` on PATH stands in for resolution). It is gated (in main,
+# via _advertise_assert_enabled) to exactly the watchdog's scope -- roslaunch +
+# remote master -- so single-machine / local-master / non-roslaunch boots stay
+# byte-identical. ADVERTISE_ASSERT_ENABLED=0 is the escape hatch for deployments
+# with real cross-host DNS, where a hostname is a legitimate advertised value.
+
+# PURE. Echo the host THIS node will advertise, in rospy get_local_address /
+# roscpp determineHost precedence: an argv `__hostname:=` override wins over an
+# argv `__ip:=` override, which wins over ${ROS_HOSTNAME}, then ${ROS_IP}, then
+# the `hostname` fallback. Scan the whole argv for each override (either may sit
+# anywhere in the launch args), so a later __ip:= never shadows an __hostname:=.
+_advertised_host() {
+  local arg cli_hostname="" cli_ip=""
+  for arg in "$@"; do
+    case "${arg}" in
+      __hostname:=*) cli_hostname="${arg#__hostname:=}" ;;
+      __ip:=*) cli_ip="${arg#__ip:=}" ;;
+    esac
+  done
+
+  if [[ -n "${cli_hostname}" ]]; then
+    printf '%s\n' "${cli_hostname}"
+  elif [[ -n "${cli_ip}" ]]; then
+    printf '%s\n' "${cli_ip}"
+  elif [[ -n "${ROS_HOSTNAME:-}" ]]; then
+    printf '%s\n' "${ROS_HOSTNAME}"
+  elif [[ -n "${ROS_IP:-}" ]]; then
+    printf '%s\n' "${ROS_IP}"
+  else
+    hostname
+  fi
+}
+
+# PURE classifier: does the address route only to this host? Success (return 0)
+# for localhost, the whole 127.0.0.0/8 block (Debian maps the bare hostname to
+# 127.0.1.1 -- the exact trap this assert catches), IPv6 loopback ::1, and its
+# IPv4-mapped form ::ffff:127.*. Any other address -> failure (not loopback).
+_addr_is_loopback() {
+  local addr="$1"
+  case "${addr}" in
+    localhost | 127.* | ::1 | ::ffff:127.*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# PURE truth table (like _watchdog_decide): map a resolved address onto a verdict
+# echoed on stdout, always returning 0.
+#   ""                    -> UNRESOLVABLE (getent failed, host does not resolve)
+#   loopback address      -> LOOPBACK
+#   any other address     -> OK
+_advertise_decide() {
+  local addr="$1"
+  if [[ -z "${addr}" ]]; then
+    printf 'UNRESOLVABLE\n'
+  elif _addr_is_loopback "${addr}"; then
+    printf 'LOOPBACK\n'
+  else
+    printf 'OK\n'
+  fi
+  return 0
+}
+
+# Impure resolver: echo the address `getent hosts <host>` maps the host to (its
+# first field). An IP literal resolves to itself; `localhost` -> 127.0.0.1. On
+# lookup failure (getent non-zero) echo nothing and return non-zero. Injectable
+# via a fake `getent` on PATH, the same trick the fake-`rosnode` tests use.
+_resolve_host_addr() {
+  local host="$1"
+  local line addr
+  line="$(getent hosts "${host}")" || return 1
+  read -r addr _ <<< "${line}"
+  printf '%s\n' "${addr}"
+}
+
+# PURE gate, mirrors _watchdog_enabled: engage the assert only when it is not
+# explicitly disabled (ADVERTISE_ASSERT_ENABLED defaults to 1, "0" opts out) AND
+# the command is roslaunch AND the master is remote. Reuses _ros_master_is_remote
+# so single-machine / local-master boots keep the gate false (byte-identical).
+_advertise_assert_enabled() {
+  [[ "${ADVERTISE_ASSERT_ENABLED:-1}" != "0" ]] || return 1
+  [[ "${1:-}" == "roslaunch" ]] || return 1
+  _ros_master_is_remote || return 1
+  return 0
+}
+
+# Orchestrator (main gates it; NO gate inside). Resolve the advertised host and
+# return 0 when the verdict is OK. Otherwise print the FULL derivation chain --
+# the precedence layers with their values, which host was selected, what it
+# resolved to (or UNRESOLVABLE), the verdict, and the fix -- to stderr and return
+# 1, so an operator who reads only this message can fix it without knowing ROS
+# host-precedence.
+_assert_advertised() {
+  local host addr verdict
+  host="$(_advertised_host "$@")"
+  addr="$(_resolve_host_addr "${host}" || true)"
+  verdict="$(_advertise_decide "${addr}")"
+  [[ "${verdict}" == "OK" ]] && return 0
+
+  local arg cli_hostname="" cli_ip=""
+  for arg in "$@"; do
+    case "${arg}" in
+      __hostname:=*) cli_hostname="${arg#__hostname:=}" ;;
+      __ip:=*) cli_ip="${arg#__ip:=}" ;;
+    esac
+  done
+
+  {
+    printf 'FATAL: advertised-address pre-flight assert failed (#137).\n'
+    printf 'This node would advertise an address that peers cannot reach, so it\n'
+    printf 'would register on the remote master but receive no connections\n'
+    printf '(the "rostopic list works, rostopic echo hangs" symptom).\n'
+    printf 'advertised-host precedence (first set wins):\n'
+    printf '  __hostname:= %s -> __ip:= %s -> ROS_HOSTNAME %s -> ROS_IP %s -> hostname %s\n' \
+      "${cli_hostname:-unset}" "${cli_ip:-unset}" \
+      "${ROS_HOSTNAME:-unset}" "${ROS_IP:-unset}" "$(hostname)"
+    printf 'selected advertised host: %s\n' "${host}"
+    if [[ -z "${addr}" ]]; then
+      printf 'resolution: %s -> UNRESOLVABLE\n' "${host}"
+    else
+      printf 'resolution: %s -> %s\n' "${host}" "${addr}"
+    fi
+    printf 'verdict: %s\n' "${verdict}"
+    printf 'fix: set ROS_IP to this machine'\''s LAN IP so it advertises a routable\n'
+    printf '     address; or set ADVERTISE_ASSERT_ENABLED=0 to bypass this check\n'
+    printf '     (only if a real cross-host DNS makes the advertised host reachable).\n'
+  } >&2
+  return 1
+}
+
 # ---------------------------- camera config (#105) ----------------------------
 #
 # Baked-in camera profile. The Dockerfile COPYs the repo-root `camera.yaml`
@@ -340,6 +483,15 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # watchdog relaunch loop unchanged.
   _apply_camera_config "$@"
   set -- "${CONFIGURED_ARGV[@]}"
+
+  # Pre-flight (#137): for a remote-master roslaunch, block startup if the address
+  # this node would advertise resolves to loopback or does not resolve -- it would
+  # register but be unreachable. Gated to the watchdog's scope, so single-machine
+  # / local-master / non-roslaunch paths stay byte-identical; ADVERTISE_ASSERT_ENABLED=0
+  # opts out. Runs once for both the watchdog and the plain-exec roslaunch paths.
+  if _advertise_assert_enabled "$@"; then
+    _assert_advertised "$@" || exit 1
+  fi
 
   # When the watchdog engages (enabled + remote master + roslaunch), run the
   # self-healing loop instead of a one-shot exec. Every other path -- including

@@ -271,6 +271,199 @@ EOF
     assert_output "RESTART"
 }
 
+# -------------------- Entrypoint: advertised-URI pre-flight assert --------------------
+#
+# A remote-master slave that advertises a loopback / unresolvable address boots
+# fine but is invisible on the master (peers dial the bad URI and never connect).
+# The entrypoint pre-flight (#137) blocks startup when the address THIS node WILL
+# advertise -- in ROS precedence order -- resolves to loopback or does not
+# resolve. Like the watchdog (#136), it is factored into small PURE functions
+# plus a thin impure orchestrator, so sourcing the entrypoint exercises the whole
+# decision without a live master (a fake `getent` on PATH stands in for
+# resolution, the same trick the fake-`rosnode` tests use):
+#
+#   _advertised_host       PURE. Echoes the host the node advertises, in rospy /
+#                          roscpp precedence: argv `__hostname:=` -> argv
+#                          `__ip:=` -> ${ROS_HOSTNAME} -> ${ROS_IP} -> `hostname`.
+#   _addr_is_loopback      PURE classifier: localhost / 127.* / ::1 / ::ffff:127.*
+#                          -> success (loopback), any other address -> failure.
+#   _advertise_decide      PURE truth table: "" -> UNRESOLVABLE; loopback ->
+#                          LOOPBACK; else -> OK (always returns 0, echoes verdict).
+#   _advertise_assert_enabled  PURE gate, mirrors _watchdog_enabled: on by default
+#                          (ADVERTISE_ASSERT_ENABLED != 0) AND roslaunch AND the
+#                          master is remote; ADVERTISE_ASSERT_ENABLED=0 is the
+#                          escape hatch for legitimate cross-host DNS deployments.
+#   _assert_advertised     orchestrator (no gate inside; main gates it): resolves
+#                          the advertised host and returns non-zero with the full
+#                          derivation chain + verdict when the verdict is not OK.
+
+@test "_advertised_host prefers a __hostname:= override above all (#137)" {
+    # roscpp determineHost checks the __hostname:= argv override before __ip:= and
+    # before the ROS_HOSTNAME / ROS_IP env vars, so it wins even when all are set.
+    run bash -c 'export ROS_HOSTNAME=envhost ROS_IP=5.6.7.8; source /entrypoint.sh; _advertised_host roslaunch __ip:=1.2.3.4 __hostname:=cli-host pkg foo.launch'
+    assert_success
+    assert_output "cli-host"
+}
+
+@test "_advertised_host prefers __ip:= over ROS_HOSTNAME/ROS_IP (#137)" {
+    run bash -c 'export ROS_HOSTNAME=envhost ROS_IP=5.6.7.8; source /entrypoint.sh; _advertised_host roslaunch __ip:=1.2.3.4 pkg foo.launch'
+    assert_success
+    assert_output "1.2.3.4"
+}
+
+@test "_advertised_host prefers ROS_HOSTNAME over ROS_IP (#137)" {
+    run bash -c 'export ROS_HOSTNAME=envhost ROS_IP=5.6.7.8; source /entrypoint.sh; _advertised_host roslaunch pkg foo.launch'
+    assert_success
+    assert_output "envhost"
+}
+
+@test "_advertised_host falls back to ROS_IP when only it is set (#137)" {
+    run bash -c 'unset ROS_HOSTNAME; export ROS_IP=5.6.7.8; source /entrypoint.sh; _advertised_host roslaunch pkg foo.launch'
+    assert_success
+    assert_output "5.6.7.8"
+}
+
+@test "_advertised_host falls back to hostname when nothing is set (#137)" {
+    # Last resort matches rospy get_local_address: with no argv override and no
+    # ROS_HOSTNAME / ROS_IP, the advertised host is `hostname` (must be non-empty).
+    run bash -c 'unset ROS_HOSTNAME ROS_IP; source /entrypoint.sh; out="$(_advertised_host roslaunch pkg foo.launch)"; [[ -n "${out}" && "${out}" == "$(hostname)" ]]'
+    assert_success
+}
+
+@test "_addr_is_loopback classifies 127.0.0.1 as loopback (#137)" {
+    run bash -c 'source /entrypoint.sh; _addr_is_loopback 127.0.0.1'
+    assert_success
+}
+
+@test "_addr_is_loopback classifies 127.0.1.1 as loopback (#137)" {
+    # /etc/hosts on Debian maps the bare hostname to 127.0.1.1 -- the exact trap
+    # this assert exists to catch, so the whole 127.* block must count as loopback.
+    run bash -c 'source /entrypoint.sh; _addr_is_loopback 127.0.1.1'
+    assert_success
+}
+
+@test "_addr_is_loopback classifies ::1 as loopback (#137)" {
+    run bash -c 'source /entrypoint.sh; _addr_is_loopback ::1'
+    assert_success
+}
+
+@test "_addr_is_loopback classifies localhost as loopback (#137)" {
+    run bash -c 'source /entrypoint.sh; _addr_is_loopback localhost'
+    assert_success
+}
+
+@test "_addr_is_loopback rejects a LAN address (#137)" {
+    run bash -c 'source /entrypoint.sh; _addr_is_loopback 192.168.1.5'
+    assert_failure
+}
+
+@test "_advertise_decide maps an empty address to UNRESOLVABLE (#137)" {
+    # An empty resolved address means `getent` failed -> UNRESOLVABLE (the decide
+    # function always returns 0 and echoes the verdict, like _watchdog_decide).
+    run bash -c 'source /entrypoint.sh; _advertise_decide ""'
+    assert_success
+    assert_output "UNRESOLVABLE"
+}
+
+@test "_advertise_decide maps a loopback address to LOOPBACK (#137)" {
+    run bash -c 'source /entrypoint.sh; _advertise_decide 127.0.1.1'
+    assert_success
+    assert_output "LOOPBACK"
+}
+
+@test "_advertise_decide maps a LAN address to OK (#137)" {
+    run bash -c 'source /entrypoint.sh; _advertise_decide 192.168.1.5'
+    assert_success
+    assert_output "OK"
+}
+
+@test "advertise assert enabled for a remote master + roslaunch by default (#137)" {
+    # Default ON (ADVERTISE_ASSERT_ENABLED unset): the gate engages exactly when
+    # the watchdog gate would -- remote master + roslaunch (reuses
+    # _ros_master_is_remote, so single-machine boots stay byte-identical).
+    run bash -c 'export ROS_MASTER_URI=http://192.168.1.5:11311; unset ADVERTISE_ASSERT_ENABLED; source /entrypoint.sh; _advertise_assert_enabled roslaunch pkg foo.launch'
+    assert_success
+}
+
+@test "advertise assert disabled when ADVERTISE_ASSERT_ENABLED=0 (#137)" {
+    # Escape hatch for deployments with real cross-host DNS, where a hostname is a
+    # legitimate advertised value that resolves off-box.
+    run bash -c 'export ROS_MASTER_URI=http://192.168.1.5:11311 ADVERTISE_ASSERT_ENABLED=0; source /entrypoint.sh; _advertise_assert_enabled roslaunch pkg foo.launch'
+    assert_failure
+}
+
+@test "advertise assert disabled for a local master (#137)" {
+    run bash -c 'export ROS_MASTER_URI=http://localhost:11311; source /entrypoint.sh; _advertise_assert_enabled roslaunch pkg foo.launch'
+    assert_failure
+}
+
+@test "advertise assert disabled for a non-roslaunch command (#137)" {
+    run bash -c 'export ROS_MASTER_URI=http://192.168.1.5:11311; source /entrypoint.sh; _advertise_assert_enabled bash -c "echo hi"'
+    assert_failure
+}
+
+@test "advertise assert passes when ROS_IP resolves to itself (#137)" {
+    # An IP literal resolves to itself. A fake `getent hosts <arg>` echoing the
+    # address in the first field stands in for real resolution -> verdict OK ->
+    # _assert_advertised returns 0 (no block).
+    run bash -c '
+      dir="$(mktemp -d)"
+      cat >"${dir}/getent" <<EOF
+#!/usr/bin/env bash
+printf "%s %s\n" "\$2" "\$2"
+EOF
+      chmod +x "${dir}/getent"
+      PATH="${dir}:${PATH}"
+      unset ROS_HOSTNAME
+      export ROS_IP=192.168.1.5
+      source /entrypoint.sh
+      _assert_advertised roslaunch pkg foo.launch
+    '
+    assert_success
+}
+
+@test "advertise assert blocks a hostname resolving to loopback (#137)" {
+    # ROS_HOSTNAME=rpi with a Debian /etc/hosts maps to 127.0.1.1: the fake getent
+    # returns that loopback address -> verdict LOOPBACK -> _assert_advertised
+    # returns non-zero and prints the resolved address + verdict for the operator.
+    run bash -c '
+      dir="$(mktemp -d)"
+      cat >"${dir}/getent" <<EOF
+#!/usr/bin/env bash
+printf "127.0.1.1 %s\n" "\$2"
+EOF
+      chmod +x "${dir}/getent"
+      PATH="${dir}:${PATH}"
+      unset ROS_IP
+      export ROS_HOSTNAME=rpi
+      source /entrypoint.sh
+      _assert_advertised roslaunch pkg foo.launch
+    '
+    assert_failure
+    assert_output --partial "127.0.1.1"
+    assert_output --partial "LOOPBACK"
+}
+
+@test "advertise assert blocks an unresolvable advertised host (#137)" {
+    # A host that does not resolve (fake getent exits non-zero) -> empty resolved
+    # address -> verdict UNRESOLVABLE -> _assert_advertised returns non-zero.
+    run bash -c '
+      dir="$(mktemp -d)"
+      cat >"${dir}/getent" <<EOF
+#!/usr/bin/env bash
+exit 2
+EOF
+      chmod +x "${dir}/getent"
+      PATH="${dir}:${PATH}"
+      unset ROS_IP
+      export ROS_HOSTNAME=nonexistent-host
+      source /entrypoint.sh
+      _assert_advertised roslaunch pkg foo.launch
+    '
+    assert_failure
+    assert_output --partial "UNRESOLVABLE"
+}
+
 # -------------------- RealSense packages (source-built, #88) --------------------
 # The apt ros-${ROS_DISTRO}-realsense2-* packages were removed; librealsense
 # v2.55.1 (SDK) + the ros1-legacy realsense-ros 2.3.2 wrapper are built from

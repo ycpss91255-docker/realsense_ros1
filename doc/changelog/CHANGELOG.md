@@ -8,6 +8,20 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Advertised-URI pre-flight assert in the entrypoint (refs #137). For a remote
+  master launching `roslaunch`, the entrypoint now computes -- in ROS precedence
+  order (`__hostname:=` -> `__ip:=` -> `ROS_HOSTNAME` -> `ROS_IP` -> `hostname`)
+  -- the address this node would advertise, resolves it, and **exits non-zero
+  before launch** when it resolves to loopback (e.g. the Debian `127.0.1.1`
+  hostname trap) or is unresolvable -- a node that would register on the master
+  but be unreachable (the "`rostopic list` works, `rostopic echo` hangs"
+  symptom). The block prints the full derivation chain (which precedence layer
+  supplied the value, what it resolved to, the verdict, and the fix). Gated to
+  the watchdog's scope (remote master + `roslaunch`), so single-machine /
+  local-master / non-roslaunch boots stay byte-identical. Controlled by the new
+  `ADVERTISE_ASSERT_ENABLED` env knob: **default on**; set `0` to disable (for
+  deployments with real cross-host DNS where a hostname is a legitimate
+  off-box-resolvable advertised value).
 - i18n for `doc/CALIBRATION.md` and `doc/CAMERA.md` (refs #89): both docs now
   ship in all four languages (`.zh-TW` / `.zh-CN` / `.ja`) with the same
   language-switcher header the READMEs use, closing the gap where these two were
