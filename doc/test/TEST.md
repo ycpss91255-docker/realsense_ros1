@@ -1,6 +1,6 @@
 # TEST.md
 
-**120 tests** total.
+**140 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -54,6 +54,31 @@
 | `watchdog decide: phase2 unreachable below max failures waits (#136)` | Phase 2 + `unreachable`, `failures+1 < max` -> `WAIT` (blip debounce) |
 | `watchdog decide: phase2 unreachable reaching max failures restarts (#136)` | Phase 2 + `unreachable`, `failures+1 >= max` -> `RESTART` |
 | `watchdog decide: phase2 deregistered restarts on the next tick (#136)` | Phase 2 + `deregistered` -> `RESTART` (no debounce) |
+
+### Entrypoint: advertised-URI pre-flight assert (20)
+
+| Test | Description |
+|------|-------------|
+| `_advertised_host prefers a __hostname:= override above all (#137)` | `_advertised_host`: argv `__hostname:=` wins over `__ip:=` and ROS_HOSTNAME/ROS_IP |
+| `_advertised_host prefers __ip:= over ROS_HOSTNAME/ROS_IP (#137)` | argv `__ip:=` wins over the ROS_HOSTNAME/ROS_IP env vars |
+| `_advertised_host prefers ROS_HOSTNAME over ROS_IP (#137)` | `ROS_HOSTNAME` wins over `ROS_IP` when no argv override is present |
+| `_advertised_host falls back to ROS_IP when only it is set (#137)` | `ROS_IP` is used when it is the only value set |
+| `_advertised_host falls back to hostname when nothing is set (#137)` | With no override / env, the advertised host is `hostname` (non-empty) |
+| `_addr_is_loopback classifies 127.0.0.1 as loopback (#137)` | `_addr_is_loopback`: `127.0.0.1` -> loopback (success) |
+| `_addr_is_loopback classifies 127.0.1.1 as loopback (#137)` | `127.0.1.1` (Debian `/etc/hosts` hostname map) -> loopback (success) |
+| `_addr_is_loopback classifies ::1 as loopback (#137)` | `::1` -> loopback (success) |
+| `_addr_is_loopback classifies localhost as loopback (#137)` | `localhost` -> loopback (success) |
+| `_addr_is_loopback rejects a LAN address (#137)` | `192.168.1.5` (a LAN address) -> not loopback (failure) |
+| `_advertise_decide maps an empty address to UNRESOLVABLE (#137)` | `_advertise_decide ""` -> `UNRESOLVABLE` (getent failed) |
+| `_advertise_decide maps a loopback address to LOOPBACK (#137)` | `_advertise_decide 127.0.1.1` -> `LOOPBACK` |
+| `_advertise_decide maps a LAN address to OK (#137)` | `_advertise_decide 192.168.1.5` -> `OK` |
+| `advertise assert enabled for a remote master + roslaunch by default (#137)` | `_advertise_assert_enabled`: default ON + remote master + `roslaunch` engages |
+| `advertise assert disabled when ADVERTISE_ASSERT_ENABLED=0 (#137)` | Escape hatch: `ADVERTISE_ASSERT_ENABLED=0` disables the gate |
+| `advertise assert disabled for a local master (#137)` | `localhost` master does not engage the assert |
+| `advertise assert disabled for a non-roslaunch command (#137)` | Non-`roslaunch` command does not engage the assert |
+| `advertise assert passes when ROS_IP resolves to itself (#137)` | `_assert_advertised`: `ROS_IP=192.168.1.5` resolves to itself -> `OK` -> return 0 (fake `getent`) |
+| `advertise assert blocks a hostname resolving to loopback (#137)` | `ROS_HOSTNAME=rpi` resolving to `127.0.1.1` -> return non-zero + output shows `127.0.1.1` / `LOOPBACK` |
+| `advertise assert blocks an unresolvable advertised host (#137)` | An unresolvable host (fake `getent` exits non-zero) -> return non-zero + output shows `UNRESOLVABLE` |
 
 ### RealSense packages (3)
 
