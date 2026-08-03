@@ -83,6 +83,22 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `camera.yaml` at a preset (or the empty `none.yaml`) instead.
 
 ### Fixed
+- The advertised-URI pre-flight assert no longer blocks startup on a correct
+  numeric `ROS_IP` (refs #141, regression from #137). `getent hosts <ip>` is a
+  REVERSE (PTR) lookup, not a forward one, so a perfectly routable numeric
+  `ROS_IP` with no PTR record exited 2 with no output and the assert reported
+  `resolution: <ip> -> UNRESOLVABLE` and killed the container before launch --
+  non-deterministically, since it depended on whether the reverse lookup
+  answered at that moment (observed in the field: the first start blocked, the
+  automatic restart with the same env and the same image launched fine). An IP
+  literal (IPv4 dotted-quad or any IPv6 form) is now recognised as already being
+  an address and short-circuits to itself without calling `getent`; only
+  hostnames are looked up. A loopback literal (`127.0.0.1` / `127.0.1.1` / `::1`)
+  still blocks, hostname resolution -- including the Debian bare-hostname ->
+  `127.0.1.1` trap -- is unchanged, an unresolvable hostname still blocks, and
+  `ADVERTISE_ASSERT_ENABLED=0` still bypasses the whole check. Added seven
+  `ros_env.bats` regressions, including one that drives an IP literal through a
+  `getent` that always fails.
 - Version-scoped the local librealsense SDK image tag (refs #128, base#828): the
   pre-build hook and the Dockerfile `LIBREALSENSE_IMAGE` default used a bare
   `librealsense:local`, which ros1 (v2.55.1) and ros2 (v2.58.2) share -- building
