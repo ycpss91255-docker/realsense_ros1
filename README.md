@@ -269,9 +269,13 @@ address this node *would advertise* -- in ROS precedence order (`__hostname:=` -
 `__ip:=` -> `ROS_HOSTNAME` -> `ROS_IP` -> `hostname`) -- and **exits non-zero**
 (no warn-and-continue) when that address resolves to loopback (e.g. the Debian
 `127.0.1.1` hostname trap) or does not resolve at all, since such a node
-registers on the master but is unreachable. Set `ADVERTISE_ASSERT_ENABLED=0` to
-bypass it -- only for deployments with real cross-host DNS, where a hostname is a
-legitimate off-box-resolvable advertised value.
+registers on the master but is unreachable. Only *names* are looked up: a numeric
+address (an IPv4 dotted-quad or any IPv6 form) is already an address, so it is
+checked as-is and never depends on a name lookup -- setting `ROS_IP` to this
+machine's LAN IP is always enough to satisfy the assert. Set
+`ADVERTISE_ASSERT_ENABLED=0` to bypass it -- only for deployments with real
+cross-host DNS, where a hostname is a legitimate off-box-resolvable advertised
+value.
 
 **The boot gate and the watchdog are independent.** The boot gate above waits
 for the master to *appear* (always infinite `--wait`); the watchdog governs only

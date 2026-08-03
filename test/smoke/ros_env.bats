@@ -287,6 +287,9 @@ EOF
 #                          `__ip:=` -> ${ROS_HOSTNAME} -> ${ROS_IP} -> `hostname`.
 #   _addr_is_loopback      PURE classifier: localhost / 127.* / ::1 / ::ffff:127.*
 #                          -> success (loopback), any other address -> failure.
+#   _addr_is_ip_literal    PURE classifier (#141): IPv4 dotted-quad / any IPv6
+#                          form -> success (already an address, nothing to look
+#                          up), a hostname -> failure. Gates the getent bypass.
 #   _advertise_decide      PURE truth table: "" -> UNRESOLVABLE; loopback ->
 #                          LOOPBACK; else -> OK (always returns 0, echoes verdict).
 #   _advertise_assert_enabled  PURE gate, mirrors _watchdog_enabled: on by default
@@ -462,6 +465,118 @@ EOF
     '
     assert_failure
     assert_output --partial "UNRESOLVABLE"
+}
+
+# ---------- IP literals never reach getent (regression for #141) ----------
+#
+# The #137 assert resolved EVERY advertised host with `getent hosts`, on the
+# (false) assumption that "an IP literal resolves to itself". Real glibc does a
+# REVERSE (PTR) lookup for a numeric argument: `getent hosts 203.0.113.10` exits
+# 2 with no output when no PTR record answers, while `getent ahostsv4` on the
+# same address exits 0. So a correct, routable numeric ROS_IP was classified
+# UNRESOLVABLE and startup was blocked -- non-deterministically, since the
+# outcome depended on whether the reverse lookup answered at that moment. The
+# old tests missed it because their fake `getent` echoed its argument back and
+# always exited 0, encoding the assumption instead of glibc's behaviour. The fix
+# short-circuits an IP literal to itself WITHOUT calling getent; only names are
+# looked up. The tests below therefore drive the literal path with a fake
+# `getent` that ALWAYS FAILS -- they fail against the pre-fix entrypoint.
+
+@test "_addr_is_ip_literal classifies an IPv4 dotted-quad as a literal (#141)" {
+    run bash -c 'source /entrypoint.sh; _addr_is_ip_literal 203.0.113.10'
+    assert_success
+}
+
+@test "_addr_is_ip_literal classifies an IPv6 address as a literal (#141)" {
+    # Any colon means IPv6 in some form; no DNS name may contain one.
+    run bash -c 'source /entrypoint.sh; _addr_is_ip_literal 2001:db8::5'
+    assert_success
+}
+
+@test "_addr_is_ip_literal rejects a hostname (#141)" {
+    # A name must stay on the getent path, or the Debian bare-hostname ->
+    # 127.0.1.1 trap the assert exists to catch would stop being detected.
+    run bash -c 'source /entrypoint.sh; _addr_is_ip_literal board.example.com'
+    assert_failure
+}
+
+@test "_resolve_host_addr returns an IP literal without calling getent (#141)" {
+    # The core regression: a fake `getent` that always exits non-zero stands in
+    # for the real reverse-lookup failure. The literal must still come back, and
+    # the marker file proves getent was never invoked at all.
+    run bash -c '
+      dir="$(mktemp -d)"
+      cat >"${dir}/getent" <<EOF
+#!/usr/bin/env bash
+touch "${dir}/called"
+exit 2
+EOF
+      chmod +x "${dir}/getent"
+      PATH="${dir}:${PATH}"
+      source /entrypoint.sh
+      addr="$(_resolve_host_addr 203.0.113.10)" || exit 1
+      [[ "${addr}" == "203.0.113.10" ]] || exit 1
+      [[ ! -e "${dir}/called" ]] || exit 1
+    '
+    assert_success
+}
+
+@test "_resolve_host_addr still resolves a hostname through getent (#141)" {
+    # The name path is unchanged: getent IS called and its first field wins.
+    run bash -c '
+      dir="$(mktemp -d)"
+      cat >"${dir}/getent" <<EOF
+#!/usr/bin/env bash
+printf "198.51.100.7 %s\n" "\$2"
+EOF
+      chmod +x "${dir}/getent"
+      PATH="${dir}:${PATH}"
+      source /entrypoint.sh
+      _resolve_host_addr board.example.com
+    '
+    assert_success
+    assert_output "198.51.100.7"
+}
+
+@test "advertise assert passes for a routable IP literal when getent fails (#141)" {
+    # End-to-end regression: the exact field failure -- a correct routable
+    # ROS_IP on a host whose address has no PTR record. Pre-fix this printed
+    # "resolution: <ip> -> UNRESOLVABLE" and blocked startup; it must now pass.
+    run bash -c '
+      dir="$(mktemp -d)"
+      cat >"${dir}/getent" <<EOF
+#!/usr/bin/env bash
+exit 2
+EOF
+      chmod +x "${dir}/getent"
+      PATH="${dir}:${PATH}"
+      unset ROS_HOSTNAME
+      export ROS_IP=203.0.113.10
+      source /entrypoint.sh
+      _assert_advertised roslaunch pkg foo.launch
+    '
+    assert_success
+}
+
+@test "advertise assert still blocks a loopback IP literal when getent fails (#141)" {
+    # The short-circuit only skips the LOOKUP: the literal is still fed to
+    # _advertise_decide, so 127.0.1.1 must stay a hard block, not silently pass.
+    run bash -c '
+      dir="$(mktemp -d)"
+      cat >"${dir}/getent" <<EOF
+#!/usr/bin/env bash
+exit 2
+EOF
+      chmod +x "${dir}/getent"
+      PATH="${dir}:${PATH}"
+      unset ROS_HOSTNAME
+      export ROS_IP=127.0.1.1
+      source /entrypoint.sh
+      _assert_advertised roslaunch pkg foo.launch
+    '
+    assert_failure
+    assert_output --partial "127.0.1.1"
+    assert_output --partial "LOOPBACK"
 }
 
 # -------------------- RealSense packages (source-built, #88) --------------------

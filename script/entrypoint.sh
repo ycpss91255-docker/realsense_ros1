@@ -347,6 +347,21 @@ _addr_is_loopback() {
   esac
 }
 
+# PURE classifier: is this string ALREADY a numeric address, i.e. is there
+# nothing left to look up? Success (return 0) for an IPv4 dotted-quad and for any
+# IPv6 form -- a colon can only mean IPv6 (`::1`, `2001:db8::5`,
+# `::ffff:192.0.2.1`) since no DNS name may contain one. A hostname, bare or
+# FQDN, always carries a non-digit outside the dots, so it never classifies as a
+# literal. Backs the _resolve_host_addr short-circuit below.
+_addr_is_ip_literal() {
+  local addr="$1"
+  case "${addr}" in
+    *:*) return 0 ;;
+  esac
+  [[ "${addr}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  return 0
+}
+
 # PURE truth table (like _watchdog_decide): map a resolved address onto a verdict
 # echoed on stdout, always returning 0.
 #   ""                    -> UNRESOLVABLE (getent failed, host does not resolve)
@@ -364,13 +379,24 @@ _advertise_decide() {
   return 0
 }
 
-# Impure resolver: echo the address `getent hosts <host>` maps the host to (its
-# first field). An IP literal resolves to itself; `localhost` -> 127.0.0.1. On
-# lookup failure (getent non-zero) echo nothing and return non-zero. Injectable
-# via a fake `getent` on PATH, the same trick the fake-`rosnode` tests use.
+# Impure resolver: echo the address the advertised host maps to. An IP literal
+# is echoed back UNCHANGED and never reaches `getent` (#141): `getent hosts <ip>`
+# is not a forward lookup, it is a REVERSE (PTR) lookup, so a perfectly routable
+# numeric ROS_IP with no PTR record exits 2 with no output -- and whether a PTR
+# answers varies boot to boot, which made this assert both false-positive on the
+# most common correct configuration and non-deterministic. Only a NAME is worth
+# looking up: `getent hosts <name>` echoes the mapped address in its first field
+# (`localhost` -> 127.0.0.1, a Debian bare hostname -> 127.0.1.1, the trap this
+# assert exists to catch). On lookup failure (getent non-zero) echo nothing and
+# return non-zero. The name path is injectable via a fake `getent` on PATH, the
+# same trick the fake-`rosnode` tests use.
 _resolve_host_addr() {
   local host="$1"
   local line addr
+  if _addr_is_ip_literal "${host}"; then
+    printf '%s\n' "${host}"
+    return 0
+  fi
   line="$(getent hosts "${host}")" || return 1
   read -r addr _ <<< "${line}"
   printf '%s\n' "${addr}"

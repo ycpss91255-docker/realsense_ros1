@@ -1,6 +1,6 @@
 # TEST.md
 
-**140 tests** total.
+**147 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -55,7 +55,7 @@
 | `watchdog decide: phase2 unreachable reaching max failures restarts (#136)` | Phase 2 + `unreachable`, `failures+1 >= max` -> `RESTART` |
 | `watchdog decide: phase2 deregistered restarts on the next tick (#136)` | Phase 2 + `deregistered` -> `RESTART` (no debounce) |
 
-### Entrypoint: advertised-URI pre-flight assert (20)
+### Entrypoint: advertised-URI pre-flight assert (27)
 
 | Test | Description |
 |------|-------------|
@@ -79,6 +79,13 @@
 | `advertise assert passes when ROS_IP resolves to itself (#137)` | `_assert_advertised`: `ROS_IP=192.168.1.5` resolves to itself -> `OK` -> return 0 (fake `getent`) |
 | `advertise assert blocks a hostname resolving to loopback (#137)` | `ROS_HOSTNAME=rpi` resolving to `127.0.1.1` -> return non-zero + output shows `127.0.1.1` / `LOOPBACK` |
 | `advertise assert blocks an unresolvable advertised host (#137)` | An unresolvable host (fake `getent` exits non-zero) -> return non-zero + output shows `UNRESOLVABLE` |
+| `_addr_is_ip_literal classifies an IPv4 dotted-quad as a literal (#141)` | `_addr_is_ip_literal`: `203.0.113.10` -> literal (success), so it never reaches `getent` |
+| `_addr_is_ip_literal classifies an IPv6 address as a literal (#141)` | `2001:db8::5` (any colon form) -> literal (success) |
+| `_addr_is_ip_literal rejects a hostname (#141)` | `board.example.com` -> not a literal (failure), so names stay on the `getent` path |
+| `_resolve_host_addr returns an IP literal without calling getent (#141)` | Regression for #141: fake `getent` always exits non-zero (the real reverse/PTR failure) -- the literal is still echoed back and a marker file proves `getent` was never invoked |
+| `_resolve_host_addr still resolves a hostname through getent (#141)` | Name path unchanged: `getent` IS called and its first field (`198.51.100.7`) is returned |
+| `advertise assert passes for a routable IP literal when getent fails (#141)` | Regression for #141 end-to-end: `ROS_IP=203.0.113.10` with a failing `getent` -> `_assert_advertised` returns 0 (pre-fix it printed `UNRESOLVABLE` and blocked startup) |
+| `advertise assert still blocks a loopback IP literal when getent fails (#141)` | The short-circuit skips only the lookup: `ROS_IP=127.0.1.1` still -> non-zero + `127.0.1.1` / `LOOPBACK` |
 
 ### RealSense packages (3)
 
