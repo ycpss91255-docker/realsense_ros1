@@ -471,6 +471,7 @@ just build --build-arg FILTER_CONFIG=config/realsense/filters/temporal_smooth.ya
 |----------|----------|------|
 | `none.yaml` | 空（0 bytes）-- 後処理なし。デフォルト。 | -- |
 | `temporal_smooth.yaml` | `disparity,temporal` | alpha 0.1、delta 20、`holes_fill` 0 |
+| `sensor_options.example.yaml` | `disparity,temporal` | コピー用テンプレート。`rgb_camera` / `stereo_module` ブロック（露光、ゲイン、レーザ出力）をドライバ既定値で追加 -- 1 つの profile ファイルが filter と両センサの双方に届く |
 
 1 つの profile ファイルが設定の**両方の半分** -- どのフィルタを構築するか
 （`filters_list`）とそのパラメータ -- を持ちます。両者は別々の namespace に配置され、
@@ -629,7 +630,8 @@ realsense_ros1/
 │       │   └── usb2_424x240p30fps.yaml   # USB 2 未検証（ホワイトリスト未列挙）
 │       ├── filters/            # 独自の後処理 filter 設定（filter 一覧 + パラメータ）
 │       │   ├── none.yaml               # 空ファイル = 後処理なし（デフォルト）
-│       │   └── temporal_smooth.yaml    # disparity + temporal、alpha 0.1（D435 で実測）
+│       │   ├── temporal_smooth.yaml    # disparity + temporal、alpha 0.1（D435 で実測）
+│       │   └── sensor_options.example.yaml  # コピー用テンプレート：filter + RGB/stereo センサオプション（#149）
 │       ├── launch/             # カメラ launch 階層（/ に焼き込み）
 │       │   ├── rs_camera_config.launch  # 我々の config：rs_aligned_depth + config_file/filter_config_file/filters/initial_reset を include（immutable）
 │       │   └── rs_camera.launch         # entrypoint が実行：我々の config を include（デプロイはこれに bind-mount して remap）
@@ -653,6 +655,7 @@ realsense_ros1/
         ├── ros_env.bats
         ├── camera_config.bats        # カメラ profile + launch レイヤ
         ├── filter_config.bats        # filter profile + launch 配線
+        ├── profile_assert.bats       # profile 引数がノードに実際に届くか（#149）
         ├── dockerfile_guards.bats
         └── install_udev_rules.bats   # （ヘルパーと追加の .bats は .base/test/smoke/ から）
 ```

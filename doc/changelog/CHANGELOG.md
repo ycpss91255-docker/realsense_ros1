@@ -84,6 +84,42 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the USB 2 whitelist was not enumerated (the camera was on a USB 3 link), so
   720p depth may exceed USB 2 bandwidth or not be offered -- verify on a real
   USB 2 link.
+- **Pre-flight assert that a filter profile actually reaches the node**
+  (refs #149). roslaunch silently drops a top-level arg the launch file does not
+  declare, so a deployment bind-mounting its own `/rs_camera.launch` override
+  that predates #146 -- or that simply forgets to forward the two args into its
+  `<include>` -- ran the camera completely **unfiltered** while the entrypoint
+  logged `Applying filter profile` and the process argv showed both args.
+  Observed on hardware as `/camera/realsense2_camera/filters` == `''` with no
+  `/camera/temporal` namespace at all. The entrypoint now resolves the launch
+  tree offline with `roslaunch --dump-params` (no master, no device, nothing
+  started) and refuses to boot unless the `filters` parameter equals what it
+  appended **and** every parameter block declared by the profile appears as a
+  namespace -- the second check catches `filter_config_file:=` being dropped
+  while `filters:=` gets through, which constructs the filters but leaves every
+  parameter at the librealsense default. The failure message names the launch
+  file and prints the exact `<arg>` lines to add. A dump that cannot be produced
+  is a warning, not a failure: roslaunch reports its own parse error moments
+  later, and a false positive here must never block a correct config (the
+  #137 -> #141 lesson). `PROFILE_ASSERT_ENABLED=0` opts out. Boots without a
+  profile are unaffected -- with no `filters:=` in the argv the gate never
+  engages.
+- `config/realsense/filters/sensor_options.example.yaml`, a copy-and-adapt
+  profile template (refs #149). `filter_config_file` is loaded with
+  `<rosparam ns="<camera>">`, so it reaches the **whole** camera namespace, not
+  just the filters: `<camera>/rgb_camera/*` and `<camera>/stereo_module/*` are
+  read by the same `registerDynamicOption()` -> `nh.param()` path as
+  `<camera>/temporal/*`. Camera **exposure, gain and laser power are therefore
+  already configurable through the existing profile file** -- no new mechanism
+  was needed. Verified on a D435: loading `rgb_camera` and `stereo_module`
+  blocks and restarting produced `enable_auto_exposure False, exposure 100,
+  gain 16` and `laser_power 300.0` read back via `dynparam get`. Every value in
+  the template is the observed driver default, so selecting it unchanged behaves
+  exactly like `temporal_smooth.yaml`. The same int-vs-float trap as the filter
+  blocks applies (roscpp never promotes double -> int, so `gain: 64.0` is
+  silently ignored), and manual `exposure` is only honoured once
+  `enable_auto_exposure` is false -- option application order is librealsense's,
+  not the file's, so read the value back before trusting it.
 
 ### Changed
 - `config/realsense/rs_camera_remap.example.launch` now declares and forwards
