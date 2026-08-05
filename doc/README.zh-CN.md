@@ -173,6 +173,11 @@ docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch \
   color_width:=424 color_height:=240 color_fps:=6
 ```
 
+命令行上的 `filters:=` 优先于任何烤进 image 的
+[filter profile](#filters----后处理-profile)：entrypoint 看到 argv 里已经有这个 token，
+就完全跳过自己的注入，而不是再追加一个 `filters:=` -- 那样 roslaunch 后写入者胜出的
+参数处理会无声地采用它而不是你的。跳过时 entrypoint 会在 stderr 说明。
+
 `just run -t runtime <cmd>` 覆写形式目前在 upstream 是坏的
 （[base#679](https://github.com/ycpss91255-docker/base/issues/679)），请改用上述
 `docker compose run` 形式。
@@ -391,6 +396,13 @@ override `<include>` 的是 immutable 的 `/rs_camera_config.launch`(不会复�
 CI 会验语法;你改过的副本自负责任。见
 [ADR 00000002](adr/00000002-camera-launch-override-for-remap.md)。
 
+你的副本也必须声明**并且**转发范本所声明的 profile 参数 -- `config_file`、
+`filter_config_file`、`filters`、`initial_reset`。entrypoint 是把它们追加到*最上层*的
+launch，所以少声明一个的 override 会照单全收再丢掉：在 filter profile 出现之前复制的
+副本，会让相机在完全不做后处理的情况下启动而且没有任何警告 -- 这正是单一文件 filter
+profile 要消除的无声失败。请重新复制范本，或在既有副本补上 `filter_config_file` 与
+`filters` 两行 `<arg>`。
+
 #### `yaml/` -- 我们的 profile
 
 profile 放在 `config/realsense/yaml/`。命名为 `<link>_<WxH>p<fps>fps.yaml`：
@@ -414,6 +426,79 @@ profile **尚未验证**：USB 2 白名单从未列举过（相机当时接在 U
 depth 可能超出 480 Mbps link 的带宽、或根本不提供 -- 依赖前请在真正的 USB 2 link 上逐一
 验证。D435/D455 接 USB 2 link 无法承载原厂的 640x480x30 color + depth（相机会协商连接
 但在 30 fps 下送出 **0 帧**），这正是 `usb2_*` profile 降低 fps 并关闭 IR + IMU 的原因。
+
+#### `filters/` -- 后处理 profile
+
+librealsense 的后处理 filter 用同样的方式选择，只是换成第二个根层 symlink
+`filters.yaml`。默认目标是 `config/realsense/filters/none.yaml`，一个**空文件**，
+因此出厂默认完全不做后处理。Dockerfile 会把该目标 COPY 成 `/filter_config.yaml`；
+当该文件非空时，entrypoint 会**同时**追加 `filter_config_file:=/filter_config.yaml`
+与 `filters:=<value>` -- 或者，若它做不到，就拒绝启动（见下）。
+
+```bash
+ln -sf config/realsense/filters/temporal_smooth.yaml filters.yaml  # 启用时间域平滑
+ln -sf config/realsense/filters/none.yaml filters.yaml             # 回到不做后处理
+just build --build-arg FILTER_CONFIG=config/realsense/filters/temporal_smooth.yaml
+```
+
+| 文件 | Filter | 说明 |
+|------|--------|------|
+| `none.yaml` | 空（0 bytes）-- 不做后处理。默认。 | -- |
+| `temporal_smooth.yaml` | `disparity,temporal` | alpha 0.1、delta 20、`holes_fill` 0 |
+
+单一 profile 文件**同时**拥有两半配置 -- 要构建哪些 filter（`filters_list`）以及它们的
+参数 -- 因为两者落在不同 namespace，而一次 `<rosparam command="load">` 只能到达
+一个：
+
+```
+filters_list: "disparity,temporal"  ->  <camera>/realsense2_camera/filters
+temporal/filter_smooth_alpha: 0.1   ->  <camera>/temporal/filter_smooth_alpha
+```
+
+因此 filter 参数载入**公开的** `<camera>` namespace（每个 filter 通过
+`registerDynamicOption()` 从自己的 node handle 读取）。这也是它们不能直接写进
+`yaml/` 相机 profile 的原因：在那里它们会被放到 `realsense2_camera` 底下，没有任何
+东西会读，并且会无声地退回 librealsense 默认值。注意 namespace 用的是**被构建出来的
+filter** 的名字，不一定等于清单里写的那个名字：`disparity` 会构建出两个 filter，
+`disparity_start` 与 `disparity_end`，所以它的参数落在 `<camera>/disparity_start/`
+与 `<camera>/disparity_end/`，而不是 `<camera>/disparity/`。
+
+`filters_list` 是给 entrypoint 用而非给 ROS 用的，但它仍然会落到 parameter server 上，
+所以必须是一个朴素、合法的 ROS graph resource name（开头的下划线并不合法：
+`getParam("_filters", ...)` 在 roscpp 会抛出 `InvalidNameException`）。
+
+参数区块里的类型很重要：roscpp 会把 int 提升成 double，但绝不会把 double 降成 int，
+因此一个整数型的选项若写成浮点数（`holes_fill: 0.0`）会被无声忽略，并退回 librealsense
+默认值。整数选项请保持不加引号的整数写法。
+
+**烤进 image 却无法被兑现的 profile 是致命错误，这是刻意的设计。** entrypoint 会验证
+`filters_list` 的值 -- 先去掉行内注释、去掉所有空白、剥掉一层引号 -- 再比对上游接受的
+封闭集合（`colorizer`、`disparity`、`spatial`、`temporal`、`hole_filling`、
+`decimation`、`pointcloud`、`hdr_merge`）；只要是其他东西，就印出 FATAL 区块并以非零
+状态码结束：YAML sequence（`[disparity, temporal]`）、block scalar（`>` / `|`）、
+`null`、未闭合的引号、不认识的名字，或读不到的 profile。非空但**完全没有**
+`filters_list` 的 profile 也一样：只有参数、没有 filter 清单并不是受支持的「只给参数」
+模式，而正是这个单一文件设计要防止的半套配置。替代方案比启动失败更糟 -- 不认识的
+filter 名字会让上游的 `setupFilters()` 在没有 active exception 的情况下 re-throw，
+终结 nodelet manager；roslaunch 本身还活着，相机节点却永远注册不上，watchdog 于是
+不断把它重启进同一个 crash。
+
+命令行上的 `filters:=`（或 `filter_config_file:=`）参数优先：此时 entrypoint 会完全
+跳过烤进去的 profile，而不是把自己的 token 追加在你的后面 -- 那样 roslaunch 后写入者
+胜出的参数处理会无声地采用它。见[自定义 launch 参数](#自定义-launch-参数)。
+
+在 D435、对齐深度 1280x720 上实测：
+
+| 配置 | 时间域噪声 | 跳动率 |
+|------|-----------|--------|
+| 关闭 filter | 26.08 mm | 20.75% |
+| alpha 0.4（librealsense 默认） | 12.16 mm | 7.91% |
+| alpha 0.1、`holes_fill` 0（`temporal_smooth.yaml`） | 5.59 mm | 0.57% |
+
+两个注意事项。`holes_fill` 是 persistence 而非平滑：非零的 index 会在传感器根本没有
+测量值的反光/深色表面上保留过期数值，等于用捏造的深度换取覆盖率，所以出厂的 profile
+用 `0`。另外在 `align_depth=true` 下，filter 只影响 `aligned_depth_to_color`；
+wrapper 会用进入 filter 之前的 frame 重新发布 `depth/image_rect_raw`。
 
 #### `udev/` -- 源自上游的文件
 
@@ -491,12 +576,13 @@ realsense_ros1/
 │   ├── setup_tui.sh -> ../.base/script/docker/wrapper/setup_tui.sh  # 符号链接
 │   └── hooks/                   # pre/ + post/ wrapper hooks
 ├── camera.yaml -> config/realsense/yaml/none.yaml  # symlink（当前生效的相机配置；默认为 stock）
+├── filters.yaml -> config/realsense/filters/none.yaml  # symlink（当前生效的 filter 配置；默认不做后处理）
 ├── config/
 │   ├── docker/
 │   │   └── setup.conf           # 配置面（.env/compose.yaml 由此生成）
 │   ├── shell/
 │   │   └── bashrc.d/10-ros-source.sh  # 为交互式 shell source ROS
-│   └── realsense/              # 类型优先布局：yaml / launch / udev
+│   └── realsense/              # 类型优先布局：yaml / filters / launch / udev
 │       ├── rs_camera_remap.example.launch  # 复制用 remap 范本（.example,对标 base 的 Dockerfile.example）
 │       ├── yaml/               # 我们的相机配置（ROS 1 参数格式）；none + USB2/USB3 预设
 │       │   ├── none.yaml               # 空文件 = stock 上游默认（默认）
@@ -507,8 +593,11 @@ realsense_ros1/
 │       │   ├── usb2_1280x720p6fps.yaml   # 未验证 USB 2（白名单未列举）
 │       │   ├── usb2_640x480p15fps.yaml   # 未验证 USB 2（白名单未列举）
 │       │   └── usb2_424x240p30fps.yaml   # 未验证 USB 2（白名单未列举）
+│       ├── filters/            # 我们的后处理 filter 配置（filter 清单 + 参数）
+│       │   ├── none.yaml               # 空文件 = 不做后处理（默认）
+│       │   └── temporal_smooth.yaml    # disparity + temporal，alpha 0.1（于 D435 实测）
 │       ├── launch/             # 相机 launch 分层（baked 到 /）
-│       │   ├── rs_camera_config.launch  # 我们的 config：include 原厂 + config_file/initial_reset（immutable）
+│       │   ├── rs_camera_config.launch  # 我们的 config：include 原厂 + config_file/filter_config_file/filters/initial_reset（immutable）
 │       │   └── rs_camera.launch         # entrypoint 跑的文件：include 我们的 config（部署 bind-mount 盖这个做 remap）
 │       └── udev/               # host USB 访问规则
 │           └── 99-realsense-libusb.rules  # RealSense udev 规则（vendored 自 librealsense SDK）
@@ -528,5 +617,8 @@ realsense_ros1/
 └── test/
     └── smoke/                   # 仓库自有的 bats 测试
         ├── ros_env.bats
+        ├── camera_config.bats        # 相机 profile + launch 分层
+        ├── filter_config.bats        # filter profile + launch 接线
+        ├── dockerfile_guards.bats
         └── install_udev_rules.bats   # （helper 及更多 .bats 来自 .base/test/smoke/）
 ```

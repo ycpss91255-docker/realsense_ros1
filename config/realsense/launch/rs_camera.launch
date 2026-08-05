@@ -13,13 +13,17 @@
   the reason shows in the container log.
 -->
 <launch>
-  <arg name="camera"        default="camera"/>
-  <arg name="config_file"   default=""/>
-  <arg name="initial_reset" default="true"/>
+  <arg name="camera"             default="camera"/>
+  <arg name="config_file"        default=""/>
+  <arg name="filter_config_file" default=""/>
+  <arg name="filters"            default=""/>
+  <arg name="initial_reset"      default="true"/>
 
   <include file="/rs_camera_config.launch">
-    <arg name="camera"        value="$(arg camera)"/>
-    <arg name="config_file"   value="$(arg config_file)"/>
-    <arg name="initial_reset" value="$(arg initial_reset)"/>
+    <arg name="camera"             value="$(arg camera)"/>
+    <arg name="config_file"        value="$(arg config_file)"/>
+    <arg name="filter_config_file" value="$(arg filter_config_file)"/>
+    <arg name="filters"            value="$(arg filters)"/>
+    <arg name="initial_reset"      value="$(arg initial_reset)"/>
   </include>
 </launch>

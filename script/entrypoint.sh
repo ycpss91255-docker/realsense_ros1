@@ -488,6 +488,213 @@ _apply_camera_config() {
   CONFIGURED_ARGV=("$@" "config_file:=${CAMERA_CONFIG_FILE}")
 }
 
+# ---------------------------- filter config (#146) ----------------------------
+#
+# Baked-in post-processing filter profile, the exact mirror of the camera
+# profile above: the Dockerfile COPYs the repo-root `filters.yaml` symlink's
+# TARGET into the image as /filter_config.yaml (default target
+# config/realsense/filters/none.yaml is EMPTY = "no post-processing"), and
+# activating a profile is repointing that symlink (or passing --build-arg
+# FILTER_CONFIG=config/realsense/filters/temporal_smooth.yaml).
+#
+# One profile file owns BOTH halves of the configuration, because they cannot
+# share a namespace and splitting them across two files makes half-configured
+# states possible with no warning:
+#
+#   which filters to construct -> <camera>/realsense2_camera/filters
+#   their parameters           -> <camera>/<filter>/... (e.g. <camera>/temporal)
+#
+# So the wrapper launch takes them through two different routes: the parameters
+# are rosparam-loaded into the PUBLIC camera namespace via `filter_config_file:=`,
+# and the filter list is forwarded to the stock launch arg via `filters:=`, read
+# out of the profile's `filters_list` key. The two are appended TOGETHER or not
+# at all: appending only the first would load parameters for filters that are
+# never constructed; appending only the second would construct them with the
+# librealsense defaults (temporal alpha 0.4 instead of 0.1 -- measured as
+# 12.16 mm of temporal noise instead of 5.59 mm). A non-empty profile that
+# yields no usable filter list is therefore a misconfiguration, not a
+# "parameters-only" mode, and it is fatal (see _apply_filter_config).
+FILTER_CONFIG_FILE="/filter_config.yaml"
+
+# The closed set of filter names upstream realsense-ros 2.3.2 `setupFilters()`
+# accepts. Anything else reaches its `else` branch, which does
+# `ROS_ERROR_STREAM(...); throw;` -- a bare re-throw with NO active exception,
+# i.e. std::terminate(), killing the nodelet manager. The manager is not
+# `required`, so roslaunch survives, the camera node never registers, and the
+# #136 watchdog relaunches on its startup deadline into the same crash: one
+# malformed line becomes a permanent ~5-minute crash loop. Validating here and
+# refusing to start is strictly better than that loop.
+readonly FILTER_NAMES_ALLOWED="colorizer disparity spatial temporal \
+hole_filling decimation pointcloud hdr_merge"
+
+# PURE. Is $1 a comma-separated list of names from FILTER_NAMES_ALLOWED?
+# The shape check rejects everything the whitespace/comment/quote normalisation
+# below cannot fix -- YAML flow sequences (`[a, b]`), block scalars (`>`, `|`),
+# `null`, an unterminated quote, empty elements (`a,,b`, `a,`) -- and the
+# membership check then rejects names upstream would terminate on.
+_filters_list_is_valid() {
+  local value="$1"
+  [[ "${value}" =~ ^[a-z_]+(,[a-z_]+)*$ ]] || return 1
+
+  local name
+  local -a names=()
+  IFS=',' read -r -a names <<< "${value}"
+  for name in "${names[@]}"; do
+    [[ " ${FILTER_NAMES_ALLOWED} " == *" ${name} "* ]] || return 1
+  done
+  return 0
+}
+
+# Print the validated `filters_list` value of the profile file named by $1, or
+# nothing when the key is absent or its value is empty. Returns non-zero (after
+# printing a FATAL block to stderr) when the file cannot be read or the value is
+# malformed -- the caller must propagate that, never fall back.
+#
+# The key is entrypoint-facing rather than ROS-facing, but it still lands on the
+# parameter server, so it must be a legal ROS graph resource name: a leading
+# underscore is not (`getParam("_filters", ...)` throws InvalidNameException in
+# roscpp), hence `filters_list`.
+#
+# Matched anchored at the line start, so a commented-out `# filters_list:` stays
+# disabled (commenting the key out is how a profile is parked while its
+# parameters stay documented) and an indented `filters_list:` nested inside a
+# filter block is not mistaken for the top-level key.
+#
+# Normalisation, in order: drop an inline `#` comment (a filter name can never
+# contain `#`, so cutting at the first one is safe and strictly stricter than
+# YAML's "whitespace before #" rule), drop ALL whitespace including internal
+# (`"disparity, temporal"` is the natural thing to write), then strip one
+# matching layer of quotes -- the repo's own profile quotes the value because it
+# contains a comma, and roslaunch must receive the bare list.
+_read_filters_list() {
+  local file="$1"
+  local line value grep_status=0
+
+  # `-s` (the caller's gate) is true for a DIRECTORY too, and a plain grep error
+  # was previously swallowed by `2>/dev/null || return 0`, reporting "no filters"
+  # for a file we could not read while the caller still pointed roslaunch at it.
+  if [[ ! -f "${file}" || ! -r "${file}" ]]; then
+    {
+      printf 'FATAL: filter profile is not a readable file (#146).\n'
+      printf 'The baked filter profile could not be read, so the filter list it\n'
+      printf 'owns cannot be honoured. Refusing to start rather than launching\n'
+      printf 'with post-processing silently disabled.\n'
+      printf 'profile path: %s\n' "${file}"
+      printf 'fix: check the FILTER_CONFIG build arg and any bind-mount over\n'
+      printf '     this path -- it must be a readable regular file (the default\n'
+      printf '     empty config/realsense/filters/none.yaml disables filtering).\n'
+    } >&2
+    return 1
+  fi
+
+  line="$(grep -m 1 -E '^filters_list[[:space:]]*:' -- "${file}")" || grep_status="$?"
+  if (( grep_status > 1 )); then
+    {
+      printf 'FATAL: filter profile could not be scanned (#146).\n'
+      printf 'profile file: %s\n' "${file}"
+      printf 'fix: check the file is readable and not truncated.\n'
+    } >&2
+    return 1
+  fi
+  (( grep_status == 0 )) || return 0
+
+  value="${line#*:}"
+  value="${value%%#*}"
+  value="${value//[[:space:]]/}"
+  if [[ "${value}" == \"*\" || "${value}" == \'*\' ]]; then
+    value="${value:1:${#value}-2}"
+  fi
+
+  [[ -n "${value}" ]] || return 0
+
+  if ! _filters_list_is_valid "${value}"; then
+    {
+      printf 'FATAL: filter profile has a malformed `filters_list` value (#146).\n'
+      printf 'Passing it through would make the camera node terminate on an\n'
+      printf 'unknown filter name (upstream setupFilters() re-throws with no\n'
+      printf 'active exception, killing the nodelet manager), and the watchdog\n'
+      printf 'would relaunch it into the same crash forever. Refusing to start.\n'
+      printf 'profile file: %s\n' "${file}"
+      printf 'offending line: %s\n' "${line}"
+      printf 'normalised value: %s\n' "${value}"
+      printf 'expected: a comma-separated list, no spaces required, of: %s\n' \
+        "${FILTER_NAMES_ALLOWED// /, }"
+      printf 'fix: write it as one plain scalar, e.g.\n'
+      printf '       filters_list: "disparity,temporal"\n'
+      printf '     A YAML sequence ([a, b]), a block scalar (> or |), `null`\n'
+      printf '     and an unterminated quote are all rejected on purpose.\n'
+    } >&2
+    return 1
+  fi
+
+  printf '%s\n' "${value}"
+}
+
+# Resolve the launch argv into CONFIGURED_ARGV, same contract as
+# _apply_camera_config: append the filter args when the command is a roslaunch
+# AND a NON-empty /filter_config.yaml is baked in; leave the argv untouched for
+# an empty profile (the default), a config bind-mounted away entirely, or a
+# non-roslaunch command such as the devel `bash`.
+#
+# Returns non-zero when a baked profile is present but unusable -- unreadable,
+# malformed `filters_list`, or no `filters_list` at all. The last one is not a
+# supported "parameters-only" mode: loading parameters for filters that are
+# never constructed is exactly the silent half-configured state this single-file
+# design exists to prevent, so it fails loudly instead. The caller exits on a
+# non-zero return.
+#
+# Injection is skipped entirely when the incoming argv already sets `filters:=`
+# (or `filter_config_file:=`), mirroring the `--wait` guard in _resolve_argv:
+# roslaunch takes the LAST value for a repeated arg, so appending ours after the
+# operator's would silently override the explicit command line
+# (`... rs_camera.launch filters:=pointcloud`).
+#
+# The two appliers are independent and compose; the caller chains them by
+# feeding CONFIGURED_ARGV from one into the next.
+_apply_filter_config() {
+  CONFIGURED_ARGV=("$@")
+
+  [[ "${1:-}" == "roslaunch" ]] || return 0
+  # `-s` is the "a profile is baked in" gate (the default none.yaml is 0 bytes).
+  # `-d` is ORed in so a bind-mount that lands a DIRECTORY here reaches the fatal
+  # read check below instead of depending on a directory's apparent size.
+  [[ -s "${FILTER_CONFIG_FILE}" || -d "${FILTER_CONFIG_FILE}" ]] || return 0
+
+  local arg
+  for arg in "$@"; do
+    case "${arg}" in
+      filters:=* | filter_config_file:=*)
+        printf 'Filter args already set on the command line; the baked filter\n' >&2
+        printf 'profile (%s) is NOT applied for this run.\n' \
+          "${FILTER_CONFIG_FILE}" >&2
+        return 0
+        ;;
+    esac
+  done
+
+  local filters
+  filters="$(_read_filters_list "${FILTER_CONFIG_FILE}")" || return 1
+
+  if [[ -z "${filters}" ]]; then
+    {
+      printf 'FATAL: filter profile has no `filters_list` key (#146).\n'
+      printf 'A non-empty profile must say which filters to construct: its\n'
+      printf 'parameter blocks are read from each filter, so loading them\n'
+      printf 'without constructing the filters does nothing at all, silently.\n'
+      printf 'profile file: %s\n' "${FILTER_CONFIG_FILE}"
+      printf 'expected: a top-level, uncommented line such as\n'
+      printf '       filters_list: "disparity,temporal"\n'
+      printf 'fix: add it, or select the empty profile\n'
+      printf '     (config/realsense/filters/none.yaml) to run no filters.\n'
+    } >&2
+    return 1
+  fi
+
+  printf 'Applying filter profile from %s\n' "${FILTER_CONFIG_FILE}"
+  CONFIGURED_ARGV=("$@" "filter_config_file:=${FILTER_CONFIG_FILE}" \
+    "filters:=${filters}")
+}
+
 # Only when executed as the entrypoint (not when a test sources this file):
 # source ROS and exec the resolved command.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -504,10 +711,18 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   source "/opt/ros/${ROS_DISTRO}/setup.bash"
   set -u
 
-  # Apply the baked-in camera profile (if any) BEFORE the wait/watchdog gates,
-  # so the rewritten roslaunch argv still flows through --wait injection and the
-  # watchdog relaunch loop unchanged.
+  # Apply the baked-in camera and filter profiles (if any) BEFORE the
+  # wait/watchdog gates, so the rewritten roslaunch argv still flows through
+  # --wait injection and the watchdog relaunch loop unchanged. The two are
+  # independent: chaining CONFIGURED_ARGV through both keeps either profile
+  # usable on its own or together.
   _apply_camera_config "$@"
+  set -- "${CONFIGURED_ARGV[@]}"
+
+  # A baked filter profile that cannot be honoured (unreadable / malformed /
+  # no filter list) exits here: launching anyway would either crash-loop the
+  # nodelet manager or run silently unfiltered.
+  _apply_filter_config "$@" || exit 1
   set -- "${CONFIGURED_ARGV[@]}"
 
   # Pre-flight (#137): for a remote-master roslaunch, block startup if the address

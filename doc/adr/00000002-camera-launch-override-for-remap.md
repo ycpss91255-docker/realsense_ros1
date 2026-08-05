@@ -2,6 +2,8 @@
 
 - **Date:** 2026-07-09
 - **Status:** Accepted
+- **Amended:** 2026-08-05 -- the override's arg contract grew the `filter_config_file`
+  and `filters` args (#146); the layering decision itself is unchanged.
 
 ## Context
 
@@ -32,7 +34,8 @@ A three-layer launch under `config/realsense/launch/`, baked to `/`:
 ```
 official rs_aligned_depth.launch
   ^ include
-/rs_camera_config.launch   "our config": include official + config_file + initial_reset. Immutable in the image.
+/rs_camera_config.launch   "our config": include official + config_file + filter_config_file
+                           + filters + initial_reset. Immutable in the image.
   ^ include
 /rs_camera.launch          entrypoint target: includes our config, no remap (default). Deployment overrides this.
 ```
@@ -42,6 +45,16 @@ official rs_aligned_depth.launch
   `<remap>` lines, and **bind-mounts** its copy over `/rs_camera.launch` (via
   `config/docker/setup.conf [volumes]`). Its override `<include>`s the immutable
   `/rs_camera_config.launch`, so it never duplicates the bringup logic.
+- **The override's arg contract** is the full set our config accepts:
+  `config_file`, `filter_config_file`, `filters` (both added by the #146 filter
+  profile), `initial_reset`. The override must **declare and forward every one**
+  of them. The entrypoint appends the profile args to the *top-level* launch, so
+  one the override does not declare is accepted and dropped -- an override copied
+  before #146 brings the camera up with no post-processing and no warning, which
+  is precisely the silent half-configuration the single-file filter profile
+  exists to prevent. The shipped template carries the full set, and CI asserts
+  (by xpath, `test/smoke/filter_config.bats`) that it declares and forwards each
+  one; a deployment's own copy is still its own responsibility.
 - **No env var / `.env`.** `.env` is reserved for environment parameters
   (`ROS_MASTER_URI`, versions), not application/launch config.
 - **No fallback.** A malformed override fails loudly at `roslaunch` (relaunch

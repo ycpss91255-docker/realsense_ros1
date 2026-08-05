@@ -253,6 +253,14 @@ COPY --chmod=0755 "./${ENTRYPOINT_FILE}" "/entrypoint.sh"
 # profile: --build-arg CAMERA_CONFIG=config/realsense/yaml/usb2_640x480p15fps.yaml.
 ARG CAMERA_CONFIG="camera.yaml"
 COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml
+# Baked-in post-processing filter profile: the same mechanism, one file over.
+# FILTER_CONFIG points at the repo-root `filters.yaml` symlink (default target
+# config/realsense/filters/none.yaml, EMPTY = no post-processing) and COPY bakes
+# its TARGET's content into /filter_config.yaml. The entrypoint applies it only
+# when non-empty. Override to bake a profile:
+# --build-arg FILTER_CONFIG=config/realsense/filters/temporal_smooth.yaml.
+ARG FILTER_CONFIG="filters.yaml"
+COPY --chmod=0644 "${FILTER_CONFIG}" /filter_config.yaml
 # Camera launch, three layers (see config/realsense/launch/):
 #   /rs_camera_config.launch  our config -- includes stock rs_aligned_depth.launch
 #                             + config_file/initial_reset. Stable/immutable.
@@ -329,6 +337,11 @@ ENV BATS_LIB_PATH="/usr/lib/bats"
 # Smoke test
 COPY .base/test/smoke/ /smoke_test/
 COPY test/smoke/ /smoke_test/
+# The SHIPPED filter profiles as a test fixture (ephemeral devel-test stage
+# only). Every parser test otherwise runs on synthetic temp files, so rewriting
+# a profile into a form the entrypoint rejects would ship a filter-less image
+# with the whole suite still green; the smoke suite parses these real files.
+COPY config/realsense/filters/ /lint/filters/
 
 ARG USER_NAME="user"
 ARG USER="${USER_NAME}"
@@ -422,6 +435,12 @@ COPY --chmod=0755 script/entrypoint.sh /entrypoint.sh
 # bakes a profile the entrypoint then applies to rs_aligned_depth.launch.
 ARG CAMERA_CONFIG="camera.yaml"
 COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml
+# Baked-in filter profile (see the devel stage for the full rationale). Default
+# FILTER_CONFIG=filters.yaml -> empty none.yaml -> no post-processing;
+# --build-arg FILTER_CONFIG=config/realsense/filters/temporal_smooth.yaml bakes a
+# profile the entrypoint then applies as filter_config_file:= plus filters:=.
+ARG FILTER_CONFIG="filters.yaml"
+COPY --chmod=0644 "${FILTER_CONFIG}" /filter_config.yaml
 # Camera launch, three layers (see the devel stage / config/realsense/launch/):
 # our config (immutable) + the entrypoint target + the copy-me remap template.
 COPY --chmod=0644 config/realsense/launch/rs_camera_config.launch config/realsense/launch/rs_camera.launch config/realsense/rs_camera_remap.example.launch /

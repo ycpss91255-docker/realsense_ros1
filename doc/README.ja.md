@@ -179,6 +179,12 @@ docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch \
   color_width:=424 color_height:=240 color_fps:=6
 ```
 
+コマンドラインでの `filters:=` は、焼き込まれた
+[filter profile](#filters----後処理-profile) より優先されます：entrypoint は argv に
+そのトークンが既にあることを検出し、自前の注入を完全にスキップします。2 つめの
+`filters:=` を追記すると、roslaunch の last-wins な引数処理が無言でそちらを優先して
+しまうためです。スキップしたときは stderr にその旨を出力します。
+
 `just run -t runtime <cmd>` 形式の上書きは upstream で壊れているため
 （[base#679](https://github.com/ycpss91255-docker/base/issues/679)）、上記の
 `docker compose run` 形式を使ってください。
@@ -409,6 +415,15 @@ override は immutable な `/rs_camera_config.launch` を `<include>` する（b
 `xmllint` してください。同梱テンプレートは CI で構文検証されます;編集したコピーは
 自己責任です。[ADR 00000002](adr/00000002-camera-launch-override-for-remap.md) を参照。
 
+コピーしたファイルでも、テンプレートが宣言している profile 引数 -- `config_file`、
+`filter_config_file`、`filters`、`initial_reset` -- を宣言し、**かつ**転送する必要が
+あります。entrypoint はそれらを*最上位*の launch に追加するため、いずれかを欠いた
+override は引数を受け取ったうえで捨てます：filter profile が存在する前に作られた
+コピーは、後処理を一切行わないままカメラを起動し、警告も出しません。これは単一
+ファイルの filter profile が取り除こうとしている、まさにその無言の失敗です。
+テンプレートをコピーし直すか、既存のコピーに `filter_config_file` と `filters` の
+`<arg>` 行を追加してください。
+
 #### `yaml/` -- 独自 profile
 
 profile は `config/realsense/yaml/` に置かれます。命名は
@@ -435,6 +450,89 @@ profile は `config/realsense/yaml/` に置かれます。命名は
 検証してください。D435/D455 は USB 2 接続では標準の 640x480x30 color + depth を維持
 できず（カメラはリンクをネゴシエートするが 30 fps では **0 フレーム**しか出さない）、
 これが `usb2_*` profile が fps を下げ IR + IMU をオフにする理由です。
+
+#### `filters/` -- 後処理 profile
+
+librealsense の後処理フィルタも同じ仕組みで選択します。使うのは 2 つめのルート
+symlink `filters.yaml` です。デフォルトのターゲットは
+`config/realsense/filters/none.yaml` という**空ファイル**なので、出荷時のデフォルト
+では後処理は一切行われません。Dockerfile はそのターゲットを `/filter_config.yaml`
+に COPY し、そのファイルが空でないとき entrypoint は
+`filter_config_file:=/filter_config.yaml` と `filters:=<value>` の**両方**を
+追加します -- あるいは、それができない場合は起動を拒否します（後述）。
+
+```bash
+ln -sf config/realsense/filters/temporal_smooth.yaml filters.yaml  # 時間方向の平滑化を有効化
+ln -sf config/realsense/filters/none.yaml filters.yaml             # 後処理なしに戻す
+just build --build-arg FILTER_CONFIG=config/realsense/filters/temporal_smooth.yaml
+```
+
+| ファイル | フィルタ | 備考 |
+|----------|----------|------|
+| `none.yaml` | 空（0 bytes）-- 後処理なし。デフォルト。 | -- |
+| `temporal_smooth.yaml` | `disparity,temporal` | alpha 0.1、delta 20、`holes_fill` 0 |
+
+1 つの profile ファイルが設定の**両方の半分** -- どのフィルタを構築するか
+（`filters_list`）とそのパラメータ -- を持ちます。両者は別々の namespace に配置され、
+1 回の `<rosparam command="load">` は 1 つの namespace にしか届かないためです：
+
+```
+filters_list: "disparity,temporal"  ->  <camera>/realsense2_camera/filters
+temporal/filter_smooth_alpha: 0.1   ->  <camera>/temporal/filter_smooth_alpha
+```
+
+したがってフィルタのパラメータは**公開の** `<camera>` namespace に読み込まれます
+（各フィルタは `registerDynamicOption()` で自身の node handle から読み取ります）。
+これが `yaml/` のカメラ profile に単純に追記できない理由です：そこでは
+`realsense2_camera` の下に置かれ、誰も読まないまま librealsense のデフォルト値へ
+無言でフォールバックします。namespace は**構築されたフィルタ**の名前であり、一覧に
+書いた名前とは限らない点に注意してください：`disparity` は `disparity_start` と
+`disparity_end` の 2 つのフィルタを構築するため、そのパラメータは
+`<camera>/disparity/` ではなく `<camera>/disparity_start/` と
+`<camera>/disparity_end/` の下に置かれます。
+
+`filters_list` は ROS 向けではなく entrypoint 向けですが、それでもパラメータサーバー
+に載るため、素の正当な ROS グラフリソース名でなければなりません -- 先頭のアンダー
+スコアはそれに該当しません（roscpp では `getParam("_filters", ...)` が
+`InvalidNameException` を投げます）。
+
+パラメータブロックでは型が重要です：roscpp は int を double に昇格しますが double を
+int に変換することは決してないため、整数型のオプションを浮動小数で書くと
+（`holes_fill: 0.0`）無言で無視され、librealsense のデフォルト値にフォールバックし
+ます。整数のオプションはクォートなしの整数のままにしてください。
+
+**焼き込まれた profile を守れない場合は、設計上 fatal です。** entrypoint は
+`filters_list` の値を -- 行内コメントを除去し、すべての空白を除去し、クォートを 1 層
+剥がしたうえで -- upstream が受け付ける閉じた集合（`colorizer`、`disparity`、
+`spatial`、`temporal`、`hole_filling`、`decimation`、`pointcloud`、`hdr_merge`）に
+対して検証し、それ以外であれば FATAL ブロックを表示して非ゼロで終了します：YAML の
+シーケンス（`[disparity, temporal]`）、ブロックスカラー（`>` / `|`）、`null`、
+閉じていないクォート、未知の名前、読み取れない profile です。`filters_list` が
+**まったくない**空でない profile も同様です：フィルタ一覧のないパラメータは
+「パラメータのみ」モードとしてサポートされているのではなく、この単一ファイル設計が
+防ぐために存在している無言の半端な設定です。代替は起動失敗より悪い結果になります --
+未知のフィルタ名は upstream の `setupFilters()` をアクティブな例外がないまま
+再 throw させ、nodelet manager を終了させます；roslaunch は生き残り、カメラノードは
+決して登録されず、watchdog はそれを同じクラッシュへ永久に再起動し続けます。
+
+コマンドラインでの `filters:=`（または `filter_config_file:=`）引数が勝ちます：
+entrypoint は焼き込まれた profile を完全にスキップし、指定されたトークンの後ろに
+自前のトークンを追記しません。追記すると、roslaunch の last-wins な引数処理が無言で
+そちらを優先してしまうためです。[カスタム launch 引数](#カスタム-launch-引数) を参照。
+
+D435、アライン済み depth 1280x720 での実測値：
+
+| 構成 | 時間方向ノイズ | ジャンプ率 |
+|------|----------------|------------|
+| フィルタ off | 26.08 mm | 20.75% |
+| alpha 0.4（librealsense デフォルト） | 12.16 mm | 7.91% |
+| alpha 0.1、`holes_fill` 0（`temporal_smooth.yaml`） | 5.59 mm | 0.57% |
+
+注意点が 2 つあります。`holes_fill` は平滑化ではなく persistence です：0 以外の
+index はセンサーに測定値がない反射面・暗い面でこそ古い値を保持し、捏造された depth
+と引き換えにカバレッジを稼ぐため、出荷 profile では `0` にしています。また
+`align_depth=true` ではフィルタは `aligned_depth_to_color` にのみ影響します --
+wrapper は `depth/image_rect_raw` をフィルタ前のフレームから再配信します。
 
 #### `udev/` -- 上流由来のファイル
 
@@ -512,12 +610,13 @@ realsense_ros1/
 │   ├── setup_tui.sh -> ../.base/script/docker/wrapper/setup_tui.sh  # シンボリックリンク
 │   └── hooks/                   # pre/ + post/ ラッパーフック
 ├── camera.yaml -> config/realsense/yaml/none.yaml  # symlink（有効なカメラ設定; デフォルトは stock）
+├── filters.yaml -> config/realsense/filters/none.yaml  # symlink（有効な filter 設定; デフォルトは後処理なし）
 ├── config/
 │   ├── docker/
 │   │   └── setup.conf           # 設定サーフェス（.env/compose.yaml はここから生成）
 │   ├── shell/
 │   │   └── bashrc.d/10-ros-source.sh  # インタラクティブシェル向けに ROS を source
-│   └── realsense/              # type-first レイアウト：yaml / launch / udev
+│   └── realsense/              # type-first レイアウト：yaml / filters / launch / udev
 │       ├── rs_camera_remap.example.launch  # コピー用 remap テンプレート（.example、base の Dockerfile.example に対応）
 │       ├── yaml/               # 独自のカメラ profile（ROS 1 パラメータ形式）；none + USB2/USB3 プリセット
 │       │   ├── none.yaml               # 空 = stock 上流デフォルト（デフォルト）
@@ -528,8 +627,11 @@ realsense_ros1/
 │       │   ├── usb2_1280x720p6fps.yaml   # USB 2 未検証（ホワイトリスト未列挙）
 │       │   ├── usb2_640x480p15fps.yaml   # USB 2 未検証（ホワイトリスト未列挙）
 │       │   └── usb2_424x240p30fps.yaml   # USB 2 未検証（ホワイトリスト未列挙）
+│       ├── filters/            # 独自の後処理 filter 設定（filter 一覧 + パラメータ）
+│       │   ├── none.yaml               # 空ファイル = 後処理なし（デフォルト）
+│       │   └── temporal_smooth.yaml    # disparity + temporal、alpha 0.1（D435 で実測）
 │       ├── launch/             # カメラ launch 階層（/ に焼き込み）
-│       │   ├── rs_camera_config.launch  # 我々の config：rs_aligned_depth + config_file/initial_reset を include（immutable）
+│       │   ├── rs_camera_config.launch  # 我々の config：rs_aligned_depth + config_file/filter_config_file/filters/initial_reset を include（immutable）
 │       │   └── rs_camera.launch         # entrypoint が実行：我々の config を include（デプロイはこれに bind-mount して remap）
 │       └── udev/               # ホストの USB アクセスルール
 │           └── 99-realsense-libusb.rules  # RealSense udev ルール（librealsense SDK から vendored）
@@ -549,5 +651,8 @@ realsense_ros1/
 └── test/
     └── smoke/                   # リポジトリ所有の bats テスト
         ├── ros_env.bats
+        ├── camera_config.bats        # カメラ profile + launch レイヤ
+        ├── filter_config.bats        # filter profile + launch 配線
+        ├── dockerfile_guards.bats
         └── install_udev_rules.bats   # （ヘルパーと追加の .bats は .base/test/smoke/ から）
 ```
