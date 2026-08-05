@@ -1,0 +1,72 @@
+# Copy-and-adapt template (#149). NOT meant to be symlinked as-is: every value
+# below is the driver default observed on a D435, so selecting this profile
+# unchanged behaves exactly like temporal_smooth.yaml. Copy it, change what you
+# need, and point filters.yaml at the copy.
+#
+# WHAT THIS FILE DEMONSTRATES
+#
+# `filter_config_file` is loaded with <rosparam ns="<camera>">, so it reaches the
+# WHOLE <camera> namespace -- not just the filters. Post-processing filters are
+# only its most common content. The sensors live in the same namespace:
+#
+#   <camera>/temporal/*        a filter's parameters
+#   <camera>/rgb_camera/*      the colour sensor's librealsense options
+#   <camera>/stereo_module/*   the depth (infrared stereo) sensor's options
+#
+# All three are read the same way: realsense-ros calls registerDynamicOption()
+# per module with a node handle at <camera>/<module>, and each option does a
+# nh.param() lookup at startup. Anything the parameter server holds at that path
+# is pushed to the device. That is why one file can carry all of it, and why no
+# new mechanism was needed to make exposure configurable.
+#
+# Verified on hardware (D435, 2026-08-05): loading rgb_camera and stereo_module
+# blocks through this file and restarting produced
+#   rgb_camera   -> enable_auto_exposure False, exposure 100, gain 16
+#   stereo_module -> laser_power 300.0
+# read back via `rosrun dynamic_reconfigure dynparam get`.
+#
+# TYPES MATTER, exactly as for the filter blocks: roscpp promotes int -> double
+# but never double -> int. An integer option written as a float is silently
+# ignored and falls back to the librealsense default. `exposure` and `gain` are
+# integers; `laser_power` and `white_balance` are floats.
+#
+# ORDERING IS NOT GUARANTEED: options are applied in the order librealsense
+# enumerates them, not the order written here. `exposure` is rejected by the
+# device while auto-exposure is still on, so a profile that sets both may or may
+# not land the manual value. Set enable_auto_exposure: false here, restart, and
+# read the value back before trusting it.
+#
+# BEFORE REACHING FOR EXPOSURE: measure first. On the deployment this template
+# came from, the depth holes were NOT an exposure problem -- highlights above
+# luminance 250 covered 2.10% of the frame and mean luminance was 112. The holes
+# were in the far, dim upper third of a ground-level view (0.12% valid there vs
+# 86.5% in the near floor region): a range and reflectivity limit that no
+# exposure setting recovers. `stereo_module/gain` was already at the recommended
+# 16. Raising `laser_power` helps textureless surfaces; exposure does not.
+#
+# Note that rgb_camera settings cannot affect depth at all on a D435 -- depth
+# comes from the infrared stereo pair, which meters independently through
+# stereo_module. Only change rgb_camera to fix the colour image.
+
+filters_list: "disparity,temporal"
+
+temporal:
+  filter_smooth_alpha: 0.1
+  filter_smooth_delta: 20
+  holes_fill: 0
+
+# Colour sensor. Defaults as shipped by the driver on a D435.
+rgb_camera:
+  enable_auto_exposure: true
+  gain: 64
+  # Manual exposure in units of 100 us. Only honoured once auto exposure is off;
+  # uncomment BOTH lines together and set enable_auto_exposure to false.
+  # exposure: 166
+
+# Depth (infrared stereo) sensor. Defaults as shipped by the driver on a D435.
+stereo_module:
+  enable_auto_exposure: true
+  gain: 16
+  laser_power: 150.0
+  # Manual exposure in microseconds; same auto-exposure caveat as above.
+  # exposure: 8500

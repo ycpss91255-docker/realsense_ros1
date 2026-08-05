@@ -445,6 +445,7 @@ just build --build-arg FILTER_CONFIG=config/realsense/filters/temporal_smooth.ya
 |------|--------|------|
 | `none.yaml` | 空（0 bytes）-- 不做后处理。默认。 | -- |
 | `temporal_smooth.yaml` | `disparity,temporal` | alpha 0.1、delta 20、`holes_fill` 0 |
+| `sensor_options.example.yaml` | `disparity,temporal` | 复制用模板。加上 `rgb_camera` / `stereo_module` 区块（曝光、增益、激光功率），值为驱动默认 -- 同一个 profile 文件同时触及 filter 与两个传感器 |
 
 单一 profile 文件**同时**拥有两半配置 -- 要构建哪些 filter（`filters_list`）以及它们的
 参数 -- 因为两者落在不同 namespace，而一次 `<rosparam command="load">` 只能到达
@@ -595,7 +596,8 @@ realsense_ros1/
 │       │   └── usb2_424x240p30fps.yaml   # 未验证 USB 2（白名单未列举）
 │       ├── filters/            # 我们的后处理 filter 配置（filter 清单 + 参数）
 │       │   ├── none.yaml               # 空文件 = 不做后处理（默认）
-│       │   └── temporal_smooth.yaml    # disparity + temporal，alpha 0.1（于 D435 实测）
+│       │   ├── temporal_smooth.yaml    # disparity + temporal，alpha 0.1（于 D435 实测）
+│       │   └── sensor_options.example.yaml  # 复制用模板：filter + RGB/stereo 传感器选项（#149）
 │       ├── launch/             # 相机 launch 分层（baked 到 /）
 │       │   ├── rs_camera_config.launch  # 我们的 config：include 原厂 + config_file/filter_config_file/filters/initial_reset（immutable）
 │       │   └── rs_camera.launch         # entrypoint 跑的文件：include 我们的 config（部署 bind-mount 盖这个做 remap）
@@ -619,6 +621,7 @@ realsense_ros1/
         ├── ros_env.bats
         ├── camera_config.bats        # 相机 profile + launch 分层
         ├── filter_config.bats        # filter profile + launch 接线
+        ├── profile_assert.bats       # profile 参数确实送达节点（#149）
         ├── dockerfile_guards.bats
         └── install_udev_rules.bats   # （helper 及更多 .bats 来自 .base/test/smoke/）
 ```

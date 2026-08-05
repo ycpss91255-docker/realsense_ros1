@@ -511,6 +511,7 @@ just build --build-arg FILTER_CONFIG=config/realsense/filters/temporal_smooth.ya
 |------|---------|-------|
 | `none.yaml` | Empty (0 bytes) -- no post-processing. Default. | -- |
 | `temporal_smooth.yaml` | `disparity,temporal` | alpha 0.1, delta 20, `holes_fill` 0 |
+| `sensor_options.example.yaml` | `disparity,temporal` | Copy-me template. Adds `rgb_camera` / `stereo_module` blocks (exposure, gain, laser power) at driver defaults -- one profile file reaches the filters AND both sensors |
 
 One profile file owns **both** halves of the configuration -- which filters to
 construct (`filters_list`) and what their parameters are -- because the two land
@@ -671,7 +672,8 @@ realsense_ros1/
 │       │   └── usb2_424x240p30fps.yaml   # UNVERIFIED USB 2 (whitelist not enumerated)
 │       ├── filters/            # our post-processing filter profiles (filter list + parameters)
 │       │   ├── none.yaml               # EMPTY = no post-processing (default)
-│       │   └── temporal_smooth.yaml    # disparity + temporal, alpha 0.1 (measured on a D435)
+│       │   ├── temporal_smooth.yaml    # disparity + temporal, alpha 0.1 (measured on a D435)
+│       │   └── sensor_options.example.yaml  # copy-me: filter + RGB/stereo sensor options (#149)
 │       ├── launch/             # camera launch layers (baked to /)
 │       │   ├── rs_camera_config.launch  # our config: include rs_aligned_depth + config_file/filter_config_file/filters/initial_reset (immutable)
 │       │   └── rs_camera.launch         # entrypoint target: include our config (deployment bind-mounts over this to remap)
@@ -695,6 +697,7 @@ realsense_ros1/
         ├── ros_env.bats
         ├── camera_config.bats        # camera profile + launch layers
         ├── filter_config.bats        # filter profile + launch wiring
+        ├── profile_assert.bats       # profile args actually reach the node (#149)
         ├── dockerfile_guards.bats
         └── install_udev_rules.bats   # (helper + more .bats come from .base/test/smoke/)
 ```

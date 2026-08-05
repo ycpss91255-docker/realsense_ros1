@@ -695,6 +695,186 @@ _apply_filter_config() {
     "filters:=${filters}")
 }
 
+# --------------------- profile pre-flight assert (#149) ----------------------
+#
+# _apply_filter_config validates the profile FILE. Nothing validated that the
+# args it appends REACH the node, and roslaunch silently drops a top-level arg
+# the launch file does not declare. A deployment that bind-mounts its own
+# /rs_camera.launch override -- written before #146, or simply not forwarding
+# the two args into its <include> -- therefore ran completely unfiltered while
+# this script printed "Applying filter profile" and the process argv showed both
+# args. Observed on hardware as /camera/realsense2_camera/filters == '' with no
+# /camera/temporal namespace at all. Same failure class as #143: a config that
+# reports success and does nothing.
+#
+# `roslaunch --dump-params` resolves the entire include tree OFFLINE -- no
+# master, no device, nothing started -- and prints the parameters that would
+# actually be set. That makes the swallow detectable before startup.
+
+# PURE. Print the top-level parameter BLOCKS a profile declares, one per line: a
+# key at column 0 with no inline value. Keys that carry a value (filters_list)
+# name no namespace, and commented-out or indented keys are not blocks -- the
+# example profile ships optional blocks commented out, and asserting on those
+# would block startup for a profile that is behaving correctly.
+_profile_param_blocks() {
+  sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\):[[:space:]]*$/\1/p' "${1}"
+}
+
+# PURE. Compare a --dump-params dump against what the entrypoint appended and
+# print the verdict, mirroring _advertise_decide. Args: the dump, the expected
+# `filters` value, then zero or more profile block names.
+#
+# Two distinct swallows are possible and both matter:
+#   FILTERS_SWALLOWED  `filters:=` was dropped -- no filter is constructed
+#   BLOCK_MISSING:<b>  `filter_config_file:=` was dropped while `filters:=` got
+#                      through -- the filters ARE constructed but every
+#                      parameter falls back to the librealsense default, which
+#                      is exactly the half-configured state #146 exists to
+#                      prevent
+# FILTERS_MISMATCH reports the winning value verbatim, because the likely cause
+# is an override hardcoding its own filters:= and the operator needs to see what
+# won, not merely that something differs.
+_profile_decide() {
+  local dump="${1}" expected="${2}"
+  shift 2
+
+  # Here-strings, NOT `printf | sed`: under `pipefail` a downstream reader that
+  # exits early (head, grep -q) SIGPIPEs the writer and the whole pipeline
+  # reports non-zero, which would turn a present block into a false
+  # BLOCK_MISSING on any dump large enough to outgrow the pipe buffer.
+  local actual
+  actual="$(sed -n 's#^/.*/realsense2_camera/filters:[[:space:]]*##p' \
+    <<< "${dump}")"
+  actual="${actual%%$'\n'*}"
+  # roslaunch renders a dropped arg's empty-string default as ''.
+  actual="${actual#\'}"
+  actual="${actual%\'}"
+
+  if [[ -z "${actual}" ]]; then
+    printf 'FILTERS_SWALLOWED\n'
+    return 0
+  fi
+
+  if [[ "${actual}" != "${expected}" ]]; then
+    printf 'FILTERS_MISMATCH:%s\n' "${actual}"
+    return 0
+  fi
+
+  local block
+  for block in "$@"; do
+    if ! grep -qE "^/.*/${block}/" <<< "${dump}"; then
+      printf 'BLOCK_MISSING:%s\n' "${block}"
+      return 0
+    fi
+  done
+
+  printf 'OK\n'
+}
+
+# PURE gate, mirrors _advertise_assert_enabled: engage only when not explicitly
+# disabled (PROFILE_ASSERT_ENABLED defaults to 1, "0" opts out), the command is
+# roslaunch, AND a profile was actually applied. The last condition keeps the
+# default empty profile and every non-profile boot byte-identical -- with no
+# `filters:=` in the argv there is nothing to assert.
+_profile_assert_enabled() {
+  [[ "${PROFILE_ASSERT_ENABLED:-1}" != "0" ]] || return 1
+  [[ "${1:-}" == "roslaunch" ]] || return 1
+
+  local arg
+  for arg in "$@"; do
+    case "${arg}" in
+      filters:=*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Orchestrator (main gates it; NO gate inside). Return 0 when the profile
+# provably reaches the node. Otherwise print what was appended, what the launch
+# tree actually resolves to, and the exact <arg> lines that are missing, then
+# return 1.
+#
+# Runs BEFORE _resolve_argv, so the argv here is `roslaunch <file> <args...>`
+# with no --wait injected yet; "${@:2}" is the launch file and its args.
+#
+# A dump that cannot be produced is a WARNING, not a failure: roslaunch reports
+# its own parse error moments later, and a false positive here must never block
+# a correct config. That is the #137 -> #141 lesson, where a reverse-DNS lookup
+# that legitimately had no PTR record blocked a perfectly good ROS_IP.
+_assert_profile_applied() {
+  local arg expected=""
+  for arg in "$@"; do
+    case "${arg}" in
+      filters:=*) expected="${arg#filters:=}" ;;
+    esac
+  done
+
+  local dump
+  if ! dump="$(roslaunch --dump-params "${@:2}" 2>/dev/null)"; then
+    {
+      printf 'WARNING: `roslaunch --dump-params` failed, so the filter profile\n'
+      printf 'pre-flight assert (#149) was SKIPPED and startup continues.\n'
+      printf 'roslaunch reports its own error next; this check does not block\n'
+      printf 'a config it cannot evaluate.\n'
+    } >&2
+    return 0
+  fi
+
+  local blocks=()
+  if [[ -r "${FILTER_CONFIG_FILE}" ]]; then
+    mapfile -t blocks < <(_profile_param_blocks "${FILTER_CONFIG_FILE}")
+  fi
+
+  local verdict
+  verdict="$(_profile_decide "${dump}" "${expected}" "${blocks[@]}")"
+  [[ "${verdict}" == "OK" ]] && return 0
+
+  local launch_file="${2:-<unknown>}"
+  {
+    printf 'FATAL: filter profile pre-flight assert failed (#149).\n'
+    printf 'The profile args were appended but do NOT reach the node, so the\n'
+    printf 'camera would run misconfigured while every log line above claims\n'
+    printf 'the profile was applied.\n'
+    printf 'launch file:      %s\n' "${launch_file}"
+    printf 'profile file:     %s\n' "${FILTER_CONFIG_FILE}"
+    printf 'appended:         filter_config_file:=%s filters:=%s\n' \
+      "${FILTER_CONFIG_FILE}" "${expected}"
+    printf 'verdict:          %s\n' "${verdict}"
+    case "${verdict}" in
+      FILTERS_SWALLOWED)
+        printf 'resolved filters: <empty> (the arg was dropped)\n'
+        ;;
+      FILTERS_MISMATCH:*)
+        printf 'resolved filters: %s (something else set it)\n' \
+          "${verdict#FILTERS_MISMATCH:}"
+        ;;
+      BLOCK_MISSING:*)
+        printf 'resolved filters: %s (correct), but the profile parameters\n' \
+          "${expected}"
+        printf '                  never load: no %s namespace in the launch\n' \
+          "${verdict#BLOCK_MISSING:}"
+        printf '                  tree, so every value falls back to the\n'
+        printf '                  librealsense default.\n'
+        ;;
+    esac
+    printf 'cause:            roslaunch SILENTLY DROPS a top-level arg the\n'
+    printf '                  launch file does not declare.\n'
+    printf 'fix: in %s declare BOTH args and\n' "${launch_file}"
+    printf '     forward them into its <include> of /rs_camera_config.launch:\n'
+    printf '       <arg name="filter_config_file" default=""/>\n'
+    printf '       <arg name="filters"            default=""/>\n'
+    printf '       ...\n'
+    printf '       <include file="/rs_camera_config.launch">\n'
+    printf '         <arg name="filter_config_file" value="$(arg filter_config_file)"/>\n'
+    printf '         <arg name="filters"            value="$(arg filters)"/>\n'
+    printf '       </include>\n'
+    printf '     See config/realsense/rs_camera_remap.example.launch for a\n'
+    printf '     complete override. Or set PROFILE_ASSERT_ENABLED=0 to bypass\n'
+    printf '     (only if the profile is deliberately not meant to apply).\n'
+  } >&2
+  return 1
+}
+
 # Only when executed as the entrypoint (not when a test sources this file):
 # source ROS and exec the resolved command.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -724,6 +904,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # nodelet manager or run silently unfiltered.
   _apply_filter_config "$@" || exit 1
   set -- "${CONFIGURED_ARGV[@]}"
+
+  # Pre-flight (#149): prove the profile args actually reach the node. A launch
+  # file that does not declare (or does not forward) them makes roslaunch drop
+  # them silently, and the camera then runs misconfigured with nothing but
+  # success messages in the log. Only engages when a profile was applied.
+  if _profile_assert_enabled "$@"; then
+    _assert_profile_applied "$@" || exit 1
+  fi
 
   # Pre-flight (#137): for a remote-master roslaunch, block startup if the address
   # this node would advertise resolves to loopback or does not resolve -- it would

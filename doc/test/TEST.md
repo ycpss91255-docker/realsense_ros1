@@ -1,6 +1,6 @@
 # TEST.md
 
-**178 tests** total.
+**200 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -220,6 +220,50 @@
 | `entry target passes the filter profile args through to our config (#146)` | xpath: `/rs_camera.launch` declares both args and forwards them inside its `/rs_camera_config.launch` include |
 | `remap template declares and forwards the filter profile args (#146)` | xpath: the copy-me override template every deployment starts from declares and forwards both args |
 | `Dockerfile declares FILTER_CONFIG and COPYs it to /filter_config.yaml (#146)` | `ARG FILTER_CONFIG="filters.yaml"` + `COPY --chmod=0644 "${FILTER_CONFIG}" /filter_config.yaml` |
+
+## test/smoke/profile_assert.bats
+
+### Profile block parser (5)
+
+| Test | Description |
+|------|-------------|
+| `profile blocks: a bare key with no inline value is a block (#149)` | A key at column 0 with nothing after the colon names a parameter namespace to verify |
+| `profile blocks: a key with an inline value is not a block (#149)` | `filters_list` carries a value, so it names no namespace |
+| `profile blocks: commented and indented keys are not blocks (#149)` | A commented-out or nested key must not be asserted on -- the example profile ships optional blocks commented out |
+| `profile blocks: every block of a multi-block profile is listed (#149)` | A profile carrying filter *and* sensor blocks yields all of them |
+| `profile blocks: shipped temporal_smooth.yaml declares temporal (#149)` | Parses the real shipped profile, not a synthetic temp file |
+
+### Profile pre-flight verdict (9)
+
+| Test | Description |
+|------|-------------|
+| `profile decide: OK when filters and blocks both landed (#149)` | Both halves present in the resolved launch tree is the only passing verdict |
+| `profile decide: an empty-quoted filters value is the swallow (#149)` | The exact shape observed on hardware: roslaunch renders the dropped arg's default as `''` |
+| `profile decide: a missing filters key is the swallow (#149)` | An absent key is the same failure as an empty one |
+| `profile decide: a different filters value is reported verbatim (#149)` | An override hardcoding its own `filters:=` must show WHAT won, not just that it differs |
+| `profile decide: filters through but parameters dropped is caught (#149)` | `filter_config_file:=` swallowed alone: filters constructed, every parameter silently at the librealsense default |
+| `profile decide: OK when the profile declares no blocks (#149)` | `filters_list` with no parameter block is legal -- construct the filters, accept the defaults |
+| `profile decide: a renamed camera namespace still matches (#149)` | `camera:=front_camera` must not defeat the assert |
+| `profile decide: a large dump does not trip pipefail into a false miss (#149)` | Regression guard: `printf | grep -q` SIGPIPEs the writer once the dump outgrows the pipe buffer, and `pipefail` turns that into a false `BLOCK_MISSING`; here-strings avoid the pipeline. Verified to fail against the old form at 209 KB |
+| `profile decide: every declared block must be present (#149)` | One missing block out of several is still a failure |
+
+### Profile assert gate (4)
+
+| Test | Description |
+|------|-------------|
+| `profile gate: engaged for a roslaunch carrying filters:= (#149)` | The gate engages exactly when a profile was applied |
+| `profile gate: PROFILE_ASSERT_ENABLED=0 opts out (#149)` | Explicit bypass, mirroring `ADVERTISE_ASSERT_ENABLED` |
+| `profile gate: not engaged for a non-roslaunch command (#149)` | The devel `bash` reaches the shell unchanged |
+| `profile gate: not engaged when no profile was applied (#149)` | The default empty profile appends nothing, so there is nothing to assert and the boot stays byte-identical |
+
+### Sensor options example profile (4)
+
+| Test | Description |
+|------|-------------|
+| `sensor options example profile is shipped (#149)` | The copy-and-adapt template is present in `config/realsense/filters/` |
+| `sensor options example declares filters_list (#149)` | The template must not teach a shape the entrypoint refuses to start on |
+| `sensor options example declares the sensor blocks (#149)` | `temporal` + `rgb_camera` + `stereo_module`: one file reaches the filters and both sensors, which is why exposure needs no separate mechanism |
+| `sensor options example keeps integer options unquoted integers (#149)` | roscpp never promotes double -> int, so `gain: 64.0` is silently ignored; the template must not model the broken form |
 
 ## test/smoke/dockerfile_guards.bats
 
