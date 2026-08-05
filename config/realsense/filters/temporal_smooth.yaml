@@ -1,0 +1,34 @@
+# Temporal smoothing profile: the temporal filter applied in the disparity
+# domain. This one file owns BOTH halves of the configuration -- which filters
+# to construct (filters_list) and what their parameters are (the temporal block).
+#
+# Measured on real hardware (D435, aligned depth 1280x720):
+#
+#   filters off                          temporal noise 26.08 mm, jump rate 20.75%
+#   alpha 0.4 (librealsense default)     temporal noise 12.16 mm, jump rate  7.91%
+#   alpha 0.1, holes_fill 0 (this file)  temporal noise  5.59 mm, jump rate  0.57%
+#
+# holes_fill is persistence, not smoothing: a non-zero index holds stale values
+# on exactly the reflective and dark surfaces where the sensor has no
+# measurement, so it buys coverage with invented depth. Shipped as 0.
+#
+# TYPES MATTER: roscpp promotes int -> double but never double -> int, so an
+# integer-typed option written as a float (holes_fill: 0.0) is silently ignored
+# and falls back to the librealsense default. Keep integer options unquoted
+# integers (holes_fill, filter_smooth_delta) and real-valued ones floats
+# (filter_smooth_alpha).
+#
+# With align_depth=true the filters affect aligned_depth_to_color only; the
+# wrapper republishes depth/image_rect_raw from the pre-filter frame.
+#
+# filters_list is entrypoint-facing, not ROS-facing: the entrypoint reads it,
+# validates it against the names upstream accepts, and appends filters:=<value>
+# to the roslaunch argv. It must still be a legal ROS graph resource name
+# because it also lands on the parameter server (a leading underscore is not).
+# A profile with parameters but no filters_list is a fatal misconfiguration, not
+# a supported mode -- the entrypoint refuses to start.
+filters_list: "disparity,temporal"
+temporal:
+  filter_smooth_alpha: 0.1
+  filter_smooth_delta: 20
+  holes_fill: 0

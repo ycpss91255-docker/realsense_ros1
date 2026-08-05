@@ -12,19 +12,39 @@
   config_file is applied with <rosparam> AFTER the include (later write wins, so
   the YAML overrides the launch defaults). initial_reset is a nodelet param (not
   an rs_aligned_depth.launch arg), so it is set the same way.
+
+  filter_config_file is the post-processing counterpart (#146), and it loads into
+  a DIFFERENT namespace on purpose. config_file holds node settings, which live
+  under <camera>/realsense2_camera. A filter's parameters live under the FILTER's
+  own node handle, <camera>/<filter> (e.g. <camera>/temporal/filter_smooth_alpha)
+  because registerDynamicOption() reads them from there; loading them into
+  realsense2_camera would put them where nothing reads them, and they would
+  silently fall back to the librealsense defaults. One rosparam load reaches one
+  namespace, hence the second arg and the PUBLIC <camera> ns here.
+
+  `filters` (which filters to construct) is a stock rs_aligned_depth.launch arg,
+  so it is declared here and forwarded into the include rather than rosparam'd.
+  The entrypoint supplies both from the same profile file.
 -->
 <launch>
-  <arg name="camera"        default="camera"/>
-  <arg name="config_file"   default=""/>
-  <arg name="initial_reset" default="true"/>
+  <arg name="camera"             default="camera"/>
+  <arg name="config_file"        default=""/>
+  <arg name="filter_config_file" default=""/>
+  <arg name="filters"            default=""/>
+  <arg name="initial_reset"      default="true"/>
 
   <include file="$(find realsense2_camera)/launch/rs_aligned_depth.launch">
-    <arg name="camera" value="$(arg camera)"/>
+    <arg name="camera"  value="$(arg camera)"/>
+    <arg name="filters" value="$(arg filters)"/>
   </include>
 
   <param name="$(arg camera)/realsense2_camera/initial_reset" value="$(arg initial_reset)"/>
 
   <group if="$(eval config_file != str())">
     <rosparam command="load" file="$(arg config_file)" ns="$(arg camera)/realsense2_camera"/>
+  </group>
+
+  <group if="$(eval filter_config_file != str())">
+    <rosparam command="load" file="$(arg filter_config_file)" ns="$(arg camera)"/>
   </group>
 </launch>

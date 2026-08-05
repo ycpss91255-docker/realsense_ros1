@@ -1,6 +1,6 @@
 # TEST.md
 
-**147 tests** total.
+**178 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -177,6 +177,49 @@
 | `remap template declares the output-topic remaps before the include` | The template declares the color + aligned-depth `<remap>`s before the include (so they reach the node) |
 | `Dockerfile CMD launches the entry target (/rs_camera.launch)` | Dockerfile CMD is `roslaunch /rs_camera.launch initial_reset:=true` |
 | `Dockerfile declares CAMERA_CONFIG and COPYs it to /camera_config.yaml` | `ARG CAMERA_CONFIG="camera.yaml"` + `COPY --chmod=0644 "${CAMERA_CONFIG}" /camera_config.yaml` |
+
+## test/smoke/filter_config.bats
+
+### Filter config wiring (26)
+
+| Test | Description |
+|------|-------------|
+| `filter config is baked into the image (#146)` | `/filter_config.yaml` exists (baked from the `filters.yaml` symlink target) |
+| `default baked filter config is empty (no post-processing filters) (#146)` | Default `filters/none.yaml` is 0 bytes, so the shipped default runs no post-processing |
+| `filters_list is read unquoted from a filter profile (#146)` | `_read_filters_list` returns a bare `filters_list` value |
+| `filters_list is read with the double quotes stripped (#146)` | Double quotes are YAML syntax; roslaunch must receive the bare filter list |
+| `filters_list is read with the single quotes stripped (#146)` | Same for single quotes |
+| `filters_list is read with surrounding whitespace trimmed (#146)` | A stray trailing space would be parsed as part of the last filter name |
+| `filters_list is read with internal whitespace stripped (#146)` | `"disparity, temporal"` normalises to `disparity,temporal`; the space would otherwise become part of the second name |
+| `filters_list is read with an inline comment stripped (#146)` | `disparity,temporal  # smooth` would otherwise reach upstream as the name `temporal#smooth` |
+| `filters_list is read with an inline comment after a quoted value stripped (#146)` | The comment is cut before the quotes are stripped, so the quotes do not survive into the `filters:=` token |
+| `no filters_list is read when the key is absent (#146)` | The parser reports "absent" cleanly; refusing to start on it is the applier's job |
+| `a commented-out filters_list line is not read as a value (#146)` | `# filters_list:` stays disabled -- a substring match would enable filters nobody asked for |
+| `a malformed filters_list value is fatal and names the file and value (#146)` | A YAML sequence (`[disparity, temporal]`) exits non-zero with a FATAL block naming the profile file, the offending value and the fix |
+| `every known-malformed filters_list form is rejected (#146)` | Sequence, block scalar (`>` / `\|`), `null`, unterminated quote, empty element, trailing comma, wrong case -- none may be accepted |
+| `an unknown filter name is rejected against the upstream set (#146)` | A typo is fatal, not passed through: upstream's unknown-name branch terminates the nodelet manager |
+| `an unreadable filter profile is fatal, not silently empty (#146)` | A chmod-000 profile fails loudly instead of reporting "no filters" while the launch still points at it |
+| `a directory at the filter profile path is fatal (#146)` | `[ -s ]` is true for a directory, so a bind-mount landing one here must fail loudly |
+| `entrypoint leaves the argv unchanged for an empty filter config (#146)` | `_apply_filter_config` keeps the original argv when `/filter_config.yaml` is empty |
+| `entrypoint leaves the argv unchanged for a missing filter config (#146)` | A config bind-mounted away degrades to the stock CMD, not a roslaunch with an unreadable file |
+| `entrypoint appends filter_config_file:= and filters:= for a non-empty filter config (#146)` | Both tokens together: one alone loads parameters for filters never constructed, the other alone constructs them with the librealsense defaults |
+| `entrypoint applies the camera and filter profiles together (#146)` | The two appliers compose; neither drops the other's tokens (`config_file:=` asserted anchored so `filter_config_file:=` cannot satisfy it) |
+| `entrypoint does not hijack a non-roslaunch command even with a filter config (#146)` | Non-`roslaunch` command (devel `bash`) is left unchanged even when a profile is baked |
+| `a non-empty profile with no filters_list refuses to start (#146)` | Parameters without a filter list is a misconfiguration, not a "parameters-only" mode -- it exits instead of loading parameters nothing reads |
+| `a malformed profile makes the applier fail so the entrypoint exits (#146)` | The parser's non-zero return propagates through `_apply_filter_config` (the entrypoint runs it with `|| exit 1`) |
+| `an explicit filters:= on the command line is never overridden (#146)` | With `filters:=` already in the argv the baked profile is skipped entirely -- roslaunch takes the last value, so appending ours would silently win |
+| `an explicit filter_config_file:= on the command line is never overridden (#146)` | Same last-wins guard for the other half of the pair |
+| `every shipped filter profile parses to a valid filter list (#146)` | The profiles COPYed to `/lint/filters/` are parsed for real: a non-empty one that does not yield a whitelist-valid list fails the build (the other parser tests all use synthetic temp files) |
+
+### Filter launch + Dockerfile wiring (5)
+
+| Test | Description |
+|------|-------------|
+| `our config loads the filter profile into the public camera namespace (#146)` | xpath: the `filter_config_file` rosparam load has `ns="$(arg camera)"` and NOT `ns="$(arg camera)/realsense2_camera"` -- that one attribute is the whole feature |
+| `our config forwards filters into the stock camera include (#146)` | xpath: `filters` is declared and forwarded *inside* the stock `rs_aligned_depth.launch` include, not merely present somewhere in the file |
+| `entry target passes the filter profile args through to our config (#146)` | xpath: `/rs_camera.launch` declares both args and forwards them inside its `/rs_camera_config.launch` include |
+| `remap template declares and forwards the filter profile args (#146)` | xpath: the copy-me override template every deployment starts from declares and forwards both args |
+| `Dockerfile declares FILTER_CONFIG and COPYs it to /filter_config.yaml (#146)` | `ARG FILTER_CONFIG="filters.yaml"` + `COPY --chmod=0644 "${FILTER_CONFIG}" /filter_config.yaml` |
 
 ## test/smoke/dockerfile_guards.bats
 

@@ -190,6 +190,12 @@ docker compose run --rm runtime roslaunch realsense2_camera rs_camera.launch \
   color_width:=424 color_height:=240 color_fps:=6
 ```
 
+A `filters:=` on the command line takes precedence over any baked
+[filter profile](#filters----post-processing-profiles): the entrypoint sees the
+token already in the argv and skips its own injection entirely, rather than
+appending a second `filters:=` that roslaunch's last-wins arg handling would
+silently prefer over yours. It says so on stderr when it skips.
+
 The `just run -t runtime <cmd>` override form is broken upstream
 ([base#679](https://github.com/ycpss91255-docker/base/issues/679)), so prefer the
 `docker compose run` form above.
@@ -450,6 +456,14 @@ at `roslaunch` (no fallback); `xmllint` your file before mounting. The shipped
 template is validated well-formed in CI; your edited copy is your
 responsibility. See [ADR 00000002](doc/adr/00000002-camera-launch-override-for-remap.md).
 
+Your copy must also declare **and** forward the profile args the shipped template
+declares -- `config_file`, `filter_config_file`, `filters`, `initial_reset`. The
+entrypoint appends them to the *top-level* launch, so an override that omits one
+accepts it and drops it: a copy made before the filter profile existed brings the
+camera up with no post-processing and no warning, which is the exact silent
+failure the single-file filter profile is meant to remove. Re-copy the template,
+or add the `filter_config_file` and `filters` `<arg>` lines to your existing copy.
+
 #### `yaml/` -- our profiles
 
 Profiles live under `config/realsense/yaml/`. Naming is
@@ -477,6 +491,88 @@ before relying on it. A D435/D455 on a USB 2 link cannot sustain the stock
 640x480x30 color + depth (the camera negotiates the link but delivers **0
 frames** at 30 fps), which is why the `usb2_*` profiles drop fps and turn off IR
 + IMU.
+
+#### `filters/` -- post-processing profiles
+
+librealsense post-processing filters are selected the same way, by a second root
+symlink, `filters.yaml`. Its default target is `config/realsense/filters/none.yaml`,
+an **empty** file, so the shipped default runs no post-processing at all. The
+Dockerfile COPYs the target to `/filter_config.yaml`; when that file is non-empty
+the entrypoint appends **both** `filter_config_file:=/filter_config.yaml` and
+`filters:=<value>` to the launch -- or, if it cannot, refuses to start (below).
+
+```bash
+ln -sf config/realsense/filters/temporal_smooth.yaml filters.yaml  # activate temporal smoothing
+ln -sf config/realsense/filters/none.yaml filters.yaml             # back to no filtering
+just build --build-arg FILTER_CONFIG=config/realsense/filters/temporal_smooth.yaml
+```
+
+| File | Filters | Notes |
+|------|---------|-------|
+| `none.yaml` | Empty (0 bytes) -- no post-processing. Default. | -- |
+| `temporal_smooth.yaml` | `disparity,temporal` | alpha 0.1, delta 20, `holes_fill` 0 |
+
+One profile file owns **both** halves of the configuration -- which filters to
+construct (`filters_list`) and what their parameters are -- because the two land
+in different namespaces and one `<rosparam command="load">` reaches only one:
+
+```
+filters_list: "disparity,temporal"  ->  <camera>/realsense2_camera/filters
+temporal/filter_smooth_alpha: 0.1   ->  <camera>/temporal/filter_smooth_alpha
+```
+
+The filter parameters therefore load into the **public** `<camera>` namespace
+(each filter reads them from its own node handle via `registerDynamicOption()`),
+which is why they cannot simply be added to a `yaml/` camera profile -- there
+they would sit under `realsense2_camera` where nothing reads them, and silently
+fall back to the librealsense defaults. Note the namespace is the **constructed
+filter's** name, which is not always the name in the list: `disparity` builds two
+filters, `disparity_start` and `disparity_end`, so its parameters live under
+`<camera>/disparity_start/` and `<camera>/disparity_end/`, not `<camera>/disparity/`.
+
+`filters_list` is entrypoint-facing rather than ROS-facing, but it still lands on
+the parameter server, so it is a plain, legal ROS graph resource name (a leading
+underscore would not be: `getParam("_filters", ...)` throws
+`InvalidNameException` in roscpp).
+
+Types matter in the parameter blocks: roscpp promotes int to double but never
+double to int, so an integer-typed option written as a float (`holes_fill: 0.0`)
+is silently ignored and falls back to the librealsense default. Keep integer
+options as unquoted integers.
+
+**A baked profile that cannot be honoured is fatal, by design.** The entrypoint
+validates the `filters_list` value -- inline comment stripped, all whitespace
+stripped, one layer of quotes stripped -- against the closed set upstream accepts
+(`colorizer`, `disparity`, `spatial`, `temporal`, `hole_filling`, `decimation`,
+`pointcloud`, `hdr_merge`) and prints a FATAL block and exits when it is anything
+else: a YAML sequence (`[disparity, temporal]`), a block scalar (`>` / `|`),
+`null`, an unterminated quote, an unknown name, or a profile that is unreadable.
+So is a non-empty profile with **no** `filters_list` at all: parameters without a
+filter list are not a supported "parameters-only" mode, they are the silent
+half-configuration this single-file design exists to prevent. The alternative is
+worse than a failed start -- an unknown filter name makes upstream `setupFilters()`
+re-throw with no active exception, terminating the nodelet manager; roslaunch
+survives, the camera node never registers, and the watchdog relaunches it into
+the same crash indefinitely.
+
+A `filters:=` (or `filter_config_file:=`) argument on the command line wins: the
+entrypoint then skips the baked profile entirely instead of appending its own
+token after yours, which roslaunch's last-wins arg handling would have silently
+preferred. See [Custom launch args](#custom-launch-args).
+
+Measured on a D435 with aligned depth 1280x720:
+
+| Configuration | Temporal noise | Jump rate |
+|---------------|----------------|-----------|
+| Filters off | 26.08 mm | 20.75% |
+| alpha 0.4 (librealsense default) | 12.16 mm | 7.91% |
+| alpha 0.1, `holes_fill` 0 (`temporal_smooth.yaml`) | 5.59 mm | 0.57% |
+
+Two caveats. `holes_fill` is persistence, not smoothing: a non-zero index holds
+stale values on exactly the reflective and dark surfaces where the sensor has no
+measurement, buying coverage with invented depth, so the shipped profile uses
+`0`. And with `align_depth=true` the filters affect `aligned_depth_to_color`
+only -- the wrapper republishes `depth/image_rect_raw` from the pre-filter frame.
 
 #### `udev/` -- upstream-derived files
 
@@ -556,12 +652,13 @@ realsense_ros1/
 │   ├── setup_tui.sh -> ../.base/script/docker/wrapper/setup_tui.sh  # symlink
 │   └── hooks/                   # pre/ + post/ wrapper hooks
 ├── camera.yaml -> config/realsense/yaml/none.yaml  # symlink (active camera profile; default = stock)
+├── filters.yaml -> config/realsense/filters/none.yaml  # symlink (active filter profile; default = none)
 ├── config/
 │   ├── docker/
 │   │   └── setup.conf           # configuration surface (.env/compose.yaml generated from this)
 │   ├── shell/
 │   │   └── bashrc.d/10-ros-source.sh  # source ROS for interactive shells
-│   └── realsense/              # type-first layout: yaml / launch / udev
+│   └── realsense/              # type-first layout: yaml / filters / launch / udev
 │       ├── rs_camera_remap.example.launch  # copy-me remap template (.example, like base's Dockerfile.example)
 │       ├── yaml/               # our camera profiles (ROS 1 param form); none + USB2/USB3 presets
 │       │   ├── none.yaml               # EMPTY = stock upstream defaults (default)
@@ -572,8 +669,11 @@ realsense_ros1/
 │       │   ├── usb2_1280x720p6fps.yaml   # UNVERIFIED USB 2 (whitelist not enumerated)
 │       │   ├── usb2_640x480p15fps.yaml   # UNVERIFIED USB 2 (whitelist not enumerated)
 │       │   └── usb2_424x240p30fps.yaml   # UNVERIFIED USB 2 (whitelist not enumerated)
+│       ├── filters/            # our post-processing filter profiles (filter list + parameters)
+│       │   ├── none.yaml               # EMPTY = no post-processing (default)
+│       │   └── temporal_smooth.yaml    # disparity + temporal, alpha 0.1 (measured on a D435)
 │       ├── launch/             # camera launch layers (baked to /)
-│       │   ├── rs_camera_config.launch  # our config: include rs_aligned_depth + config_file/initial_reset (immutable)
+│       │   ├── rs_camera_config.launch  # our config: include rs_aligned_depth + config_file/filter_config_file/filters/initial_reset (immutable)
 │       │   └── rs_camera.launch         # entrypoint target: include our config (deployment bind-mounts over this to remap)
 │       └── udev/               # host USB-access rules
 │           └── 99-realsense-libusb.rules  # RealSense udev rules (vendored from librealsense SDK)
@@ -593,5 +693,8 @@ realsense_ros1/
 └── test/
     └── smoke/                   # repo-owned bats tests
         ├── ros_env.bats
+        ├── camera_config.bats        # camera profile + launch layers
+        ├── filter_config.bats        # filter profile + launch wiring
+        ├── dockerfile_guards.bats
         └── install_udev_rules.bats   # (helper + more .bats come from .base/test/smoke/)
 ```

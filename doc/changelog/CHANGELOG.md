@@ -8,6 +8,52 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Selectable librealsense **post-processing filter profile** via a new root
+  `filters.yaml` symlink (refs #146), mirroring the existing `camera.yaml`
+  camera-profile mechanism. Default target `config/realsense/filters/none.yaml`
+  is empty, so the shipped default runs no post-processing and behaviour is
+  unchanged. `config/realsense/filters/temporal_smooth.yaml` ships the measured
+  configuration (`disparity,temporal`, alpha 0.1, delta 20, `holes_fill` 0): on a
+  D435 with aligned depth 1280x720 that is 5.59 mm of temporal noise against
+  26.08 mm unfiltered and 12.16 mm at the librealsense default alpha 0.4.
+  Activate by repointing the symlink or per build with `--build-arg
+  FILTER_CONFIG=config/realsense/filters/temporal_smooth.yaml`.
+  A single profile file owns **both** which filters to construct (`filters_list`)
+  and what their parameters are, because the two land in different namespaces
+  (`<camera>/realsense2_camera/filters` vs `<camera>/<filter>/...`) and one
+  `<rosparam command="load">` reaches only one. Splitting them would make it
+  possible to enable a filter without its parameters (silently getting the
+  librealsense defaults) or to set parameters without enabling the filter
+  (silently doing nothing), with no warning either way. The entrypoint therefore
+  appends **both** `filter_config_file:=` and `filters:=` when the baked
+  `/filter_config.yaml` is non-empty, and `rs_camera_config.launch` gains a
+  `filter_config_file` arg loaded into the **public** camera namespace plus a
+  `filters` arg forwarded to the stock `rs_aligned_depth.launch` include.
+  Note the parameter namespace is the *constructed filter's* name, which is not
+  always the name in the list: `disparity` builds `disparity_start` and
+  `disparity_end`. `holes_fill` is persistence rather than smoothing (a non-zero
+  index holds stale values on the surfaces where the sensor has no measurement),
+  and with `align_depth=true` the filters affect `aligned_depth_to_color` only --
+  the wrapper republishes `depth/image_rect_raw` from the pre-filter frame.
+- A baked filter profile that cannot be honoured now **fails the container start
+  loudly** instead of launching a half-configured camera (refs #146). The
+  entrypoint normalises the `filters_list` value (inline comment, all whitespace,
+  one layer of quotes) and validates it against the closed set upstream
+  `setupFilters()` accepts (`colorizer`, `disparity`, `spatial`, `temporal`,
+  `hole_filling`, `decimation`, `pointcloud`, `hdr_merge`); a YAML sequence
+  (`[a, b]`), a block scalar (`>` / `|`), `null`, an unterminated quote, an
+  unknown filter name, an unreadable profile, and a non-empty profile with **no**
+  `filters_list` each print a FATAL block (file, offending value, accepted set,
+  fix) and exit non-zero. There is deliberately no "parameters-only" mode.
+  Passing an unknown name through instead would make upstream re-throw with no
+  active exception, terminating the nodelet manager; roslaunch survives, the
+  camera node never registers, and the #136 watchdog relaunches into the same
+  crash -- a permanent ~5-minute crash loop from one malformed line.
+- An explicit `filters:=` (or `filter_config_file:=`) in the launch command now
+  suppresses the baked filter profile entirely (refs #146), instead of appending
+  a second token that roslaunch's last-wins arg handling would silently prefer
+  over the operator's. Mirrors the existing `--wait` guard; the entrypoint says
+  on stderr when it skips.
 - Advertised-URI pre-flight assert in the entrypoint (refs #137). For a remote
   master launching `roslaunch`, the entrypoint now computes -- in ROS precedence
   order (`__hostname:=` -> `__ip:=` -> `ROS_HOSTNAME` -> `ROS_IP` -> `hostname`)
@@ -40,6 +86,13 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   USB 2 link.
 
 ### Changed
+- `config/realsense/rs_camera_remap.example.launch` now declares and forwards
+  `filter_config_file` and `filters` alongside `config_file` (refs #146).
+  **Deployments that already bind-mount their own copy of this template over
+  `/rs_camera.launch` must update that copy** before selecting a filter profile:
+  the entrypoint appends the filter args to the *top-level* launch, so an
+  override predating this change accepts them and drops them, bringing the camera
+  up with no post-processing and no warning.
 - The remote-master watchdog now separates its startup wait from
   post-registration failure detection (refs #136). Before the supervised node
   has ever registered, only a new `WATCHDOG_STARTUP_DEADLINE` backstop (default
