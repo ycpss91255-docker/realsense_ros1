@@ -319,6 +319,27 @@ remote master launching `roslaunch`; local/unset master and other commands are
 unchanged. The `--wait` gate above still applies automatically for a remote
 master whether or not the watchdog is enabled.
 
+**Every watchdog restart says why.** A restart prints one line to stderr naming
+the rule that fired, the probe state behind it, the consecutive failure count
+against its limit, that launch's uptime, how long since the node was last seen
+registered, and how many restarts this container has done -- plus one line when
+the node registers again:
+
+```text
+watchdog: restarting roslaunch -- trigger=deregistered state=deregistered failures=0/3 uptime=1020s last-registered=15s-ago restarts=7
+watchdog: /camera/realsense2_camera registered after 30s (restarts=7)
+```
+
+`trigger=deregistered` means the master answered and this node was gone (master
+churn -- investigate the master, not this host). `trigger=unreachable-debounce`
+means the master stopped answering for the whole `WATCHDOG_FAILURES` window
+(investigate the network or the link). `trigger=startup-deadline(300s)` means the
+launch never registered at all (investigate the launch args and the node's own
+log). Nothing is printed on a healthy tick -- a line every `WATCHDOG_INTERVAL`
+would bury the ones that matter. Without these lines a correct restart is
+indistinguishable from failing camera hardware, especially since each relaunch
+runs `initial_reset:=true` and produces a burst of USB warnings of its own.
+
 **On the master machine:** run the master and subscribe (any ROS 1 environment,
 e.g. the `ros_distro` env):
 

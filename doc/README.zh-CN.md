@@ -273,6 +273,23 @@ unreachable 的恢复更抗闪断。`WATCHDOG_STARTUP_DEADLINE` 是兜底、不�
 `roslaunch` 时生效；本机／未设置的 master 与其他命令维持不变。无论 watchdog 是否启
 用，上述 `--wait` gate 仍会对远端 master 自动生效。
 
+**每次 watchdog 重启都会说明原因。** 重启时会在 stderr 打印一行：触发的规则、背后的
+探测状态、连续失败次数与其上限、该次 launch 的存活时间、距离上次看到节点注册多久，
+以及这个容器已经重启过几次；节点重新注册时再打印一行：
+
+```text
+watchdog: restarting roslaunch -- trigger=deregistered state=deregistered failures=0/3 uptime=1020s last-registered=15s-ago restarts=7
+watchdog: /camera/realsense2_camera registered after 30s (restarts=7)
+```
+
+`trigger=deregistered` 表示 master 有响应但本节点不在名单上（master 重启／churn，
+要查的是 master 而不是本机）；`trigger=unreachable-debounce` 表示 master 在整个
+`WATCHDOG_FAILURES` 窗口内都没响应（要查网络或链路）；`trigger=startup-deadline(300s)`
+表示这次 launch 从未注册成功（要查 launch 参数与节点自身的 log）。健康的检查周期**不会**
+打印任何东西 -- 每个 `WATCHDOG_INTERVAL` 打印一行只会把真正重要的信息淹没。少了这些行，
+一次正确的重启看起来就跟相机硬件故障一模一样，尤其每次重启都会跑 `initial_reset:=true`
+而自己产生一批 USB 警告。
+
 **在 master 机器上：** 运行 master 并订阅（任何 ROS 1 环境皆可，例如 `ros_distro`
 环境）：
 
