@@ -1,6 +1,6 @@
 # TEST.md
 
-**200 tests** total.
+**212 tests** total.
 
 ## test/smoke/ros_env.bats
 
@@ -54,6 +54,23 @@
 | `watchdog decide: phase2 unreachable below max failures waits (#136)` | Phase 2 + `unreachable`, `failures+1 < max` -> `WAIT` (blip debounce) |
 | `watchdog decide: phase2 unreachable reaching max failures restarts (#136)` | Phase 2 + `unreachable`, `failures+1 >= max` -> `RESTART` |
 | `watchdog decide: phase2 deregistered restarts on the next tick (#136)` | Phase 2 + `deregistered` -> `RESTART` (no debounce) |
+
+### Entrypoint: watchdog restart reason (12)
+
+| Test | Description |
+|------|-------------|
+| `watchdog restart reason names the deregistered trigger (#152)` | `_watchdog_restart_reason` names `trigger=deregistered` (master churn) and the probe state that produced it |
+| `watchdog restart reason names the unreachable debounce trigger (#152)` | Phase 2 + `unreachable` -> `trigger=unreachable-debounce` (network/link), distinct from the deregistered path |
+| `watchdog restart reason reports the failure count and its limit (#152)` | The debounced path reports `failures=3/3` -- the consecutive misses including this tick, against the limit reached |
+| `watchdog restart reason names the startup-deadline backstop with its limit (#152)` | Phase 1 -> `trigger=startup-deadline(300s)` and `last-registered=never` |
+| `watchdog restart reason reports uptime, last-registered age and restart count (#152)` | Line carries `uptime=`, `last-registered=<n>s-ago` and `restarts=` |
+| `watchdog restart reason is silent for a HEALTHY verdict (#152)` | `HEALTHY` -> no output |
+| `watchdog restart reason is silent for a WAIT verdict (#152)` | `WAIT` -> no output: only the restart transition prints, never a per-tick line |
+| `watchdog restart reason prints exactly one line (#152)` | A restart emits exactly one line, not a block |
+| `watchdog decide stays pure: verdict on stdout, nothing on stderr (#152)` | Contract guard: `_watchdog_decide` keeps emitting only the verdict word, with no diagnostics of its own |
+| `watchdog logs the node registration on the first sighting (#152)` | `_watchdog_registered_notice` reports the node, the seconds to registration and the restart count |
+| `watchdog registration notice is silent on later healthy ticks (#152)` | `registered_once=1` -> no output (once per launch, not per tick) |
+| `watchdog loop routes both notices to stderr (#152)` | Structural guard: the loop redirects both formatters to stderr, where the pre-flight asserts already log |
 
 ### Entrypoint: advertised-URI pre-flight assert (27)
 

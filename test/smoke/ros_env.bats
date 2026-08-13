@@ -271,6 +271,128 @@ EOF
     assert_output "RESTART"
 }
 
+# -------------------- Entrypoint: watchdog restart reason --------------------
+#
+# The watchdog decided correctly and said nothing about it (#152): a remote master
+# rebooting every 16-48 minutes produced 7 correct `deregistered` restarts that
+# read on the console as a camera respawning for no reason, and the USB warnings
+# around each relaunch (`initial_reset:=true` doing its job) made failing hardware
+# the obvious -- and wrong -- conclusion. The verdict, the probe state and the
+# counters all existed and were then discarded.
+#
+# The fix adds evidence WITHOUT touching the decision, as two more PURE functions
+# whose output the loop routes to stderr:
+#
+#   _watchdog_restart_reason     (action, state, registered_once, failures,
+#                                elapsed, max_failures, startup_deadline,
+#                                last_registered, restarts) -> ONE line naming the
+#                                rule that fired. Prints NOTHING unless the action
+#                                is RESTART, so "no per-tick noise" is a property
+#                                of the formatter itself, not of its caller.
+#   _watchdog_registered_notice  (registered_once, node, elapsed, restarts) -> one
+#                                line on the FIRST sighting since this (re)launch
+#                                and nothing on any later healthy tick.
+#
+# `_watchdog_decide` is untouched: the truth table above still pins its verdicts,
+# and the purity test below pins that it emits nothing anywhere else.
+
+@test "watchdog restart reason names the deregistered trigger (#152)" {
+    # `deregistered` and `unreachable` have different causes (master churn vs a
+    # network/link fault) and different fixes, so the line has to name which one.
+    run bash -c 'source /entrypoint.sh; _watchdog_restart_reason RESTART deregistered 1 0 400 3 300 385 3'
+    assert_success
+    assert_output --partial "trigger=deregistered"
+    assert_output --partial "state=deregistered"
+}
+
+@test "watchdog restart reason names the unreachable debounce trigger (#152)" {
+    run bash -c 'source /entrypoint.sh; _watchdog_restart_reason RESTART unreachable 1 2 400 3 300 340 1'
+    assert_success
+    assert_output --partial "trigger=unreachable-debounce"
+    assert_output --partial "state=unreachable"
+}
+
+@test "watchdog restart reason reports the failure count and its limit (#152)" {
+    # The debounced path is the one whose count matters: this tick is the third
+    # consecutive `unreachable` of a max of three. Without both numbers a reader
+    # cannot tell a debounced restart from an immediate one.
+    run bash -c 'source /entrypoint.sh; _watchdog_restart_reason RESTART unreachable 1 2 400 3 300 340 1'
+    assert_success
+    assert_output --partial "failures=3/3"
+}
+
+@test "watchdog restart reason names the startup-deadline backstop with its limit (#152)" {
+    # Phase 1 (never registered) restarts on the WATCHDOG_STARTUP_DEADLINE
+    # backstop, not on the probe state, so the trigger must say so and carry the
+    # deadline it hit -- and there is no last-registered time to report.
+    run bash -c 'source /entrypoint.sh; _watchdog_restart_reason RESTART unreachable 0 0 300 3 300 -1 1'
+    assert_success
+    assert_output --partial "trigger=startup-deadline(300s)"
+    assert_output --partial "last-registered=never"
+}
+
+@test "watchdog restart reason reports uptime, last-registered age and restart count (#152)" {
+    run bash -c 'source /entrypoint.sh; _watchdog_restart_reason RESTART deregistered 1 0 400 3 300 340 3'
+    assert_success
+    assert_output --partial "uptime=400s"
+    assert_output --partial "last-registered=60s-ago"
+    assert_output --partial "restarts=3"
+}
+
+@test "watchdog restart reason is silent for a HEALTHY verdict (#152)" {
+    run bash -c 'source /entrypoint.sh; _watchdog_restart_reason HEALTHY healthy 1 0 400 3 300 400 2'
+    assert_success
+    assert_output ""
+}
+
+@test "watchdog restart reason is silent for a WAIT verdict (#152)" {
+    # A line on every WATCHDOG_INTERVAL probe would bury the restart lines this
+    # exists to surface, so only the restart TRANSITION ever prints.
+    run bash -c 'source /entrypoint.sh; _watchdog_restart_reason WAIT unreachable 1 1 400 3 300 340 2'
+    assert_success
+    assert_output ""
+}
+
+@test "watchdog restart reason prints exactly one line (#152)" {
+    run bash -c 'source /entrypoint.sh; _watchdog_restart_reason RESTART deregistered 1 0 400 3 300 385 3 | wc -l'
+    assert_success
+    assert_output "1"
+}
+
+@test "watchdog decide stays pure: verdict on stdout, nothing on stderr (#152)" {
+    # The reason is a SEPARATE formatter on purpose. _watchdog_decide is the truth
+    # table the tests above drive directly, so it must keep emitting only the
+    # verdict word its callers parse, and no diagnostics of its own.
+    run bash -c 'source /entrypoint.sh; _watchdog_decide deregistered 1 0 400 3 300 2>&1 1>/dev/null'
+    assert_success
+    assert_output ""
+}
+
+@test "watchdog logs the node registration on the first sighting (#152)" {
+    # One line per (re)launch, which pins the recovery time and proves the restart
+    # actually worked -- the other half of the evidence #152 was missing.
+    run bash -c 'source /entrypoint.sh; _watchdog_registered_notice 0 /camera/realsense2_camera 45 2'
+    assert_success
+    assert_output --partial "/camera/realsense2_camera"
+    assert_output --partial "registered after 45s"
+    assert_output --partial "restarts=2"
+}
+
+@test "watchdog registration notice is silent on later healthy ticks (#152)" {
+    run bash -c 'source /entrypoint.sh; _watchdog_registered_notice 1 /camera/realsense2_camera 60 2'
+    assert_success
+    assert_output ""
+}
+
+@test "watchdog loop routes both notices to stderr (#152)" {
+    # The formatters print to stdout like _watchdog_decide does; the LOOP owns the
+    # routing. Diagnostics belong on stderr next to the pre-flight asserts, so one
+    # stream carries everything an operator greps after an unexplained restart.
+    run grep -cF '"${restarts}" >&2' /entrypoint.sh
+    assert_success
+    assert_output "2"
+}
+
 # -------------------- Entrypoint: advertised-URI pre-flight assert --------------------
 #
 # A remote-master slave that advertises a loopback / unresolvable address boots

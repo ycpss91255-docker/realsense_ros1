@@ -285,6 +285,26 @@ WATCHDOG_ROSNODE=/camera/realsense2_camera  # ヘルスシグナルとなるノ�
 ローカル／未設定の master やその他のコマンドは変更されません。watchdog の有効・無効
 にかかわらず、上記の `--wait` ゲートはリモート master に対して自動的に適用されます。
 
+**watchdog は再起動の理由を必ず出力します。** 再起動時に stderr へ 1 行だけ出力します
+-- 発火したルール、その裏にあるプローブ状態、連続失敗回数とその上限、その launch の
+稼働時間、ノードが最後に登録を確認できてからの経過時間、そしてこのコンテナが何回
+再起動したか。ノードが再登録されたときにもう 1 行出力します：
+
+```text
+watchdog: restarting roslaunch -- trigger=deregistered state=deregistered failures=0/3 uptime=1020s last-registered=15s-ago restarts=7
+watchdog: /camera/realsense2_camera registered after 30s (restarts=7)
+```
+
+`trigger=deregistered` は master が応答したのにこのノードが消えていた場合（master の
+再起動 -- 調べるべきは master であって、このホストではありません）。
+`trigger=unreachable-debounce` は `WATCHDOG_FAILURES` のウィンドウ全体で master が
+応答しなかった場合（ネットワークやリンクを調べます）。`trigger=startup-deadline(300s)`
+は launch が一度も登録できなかった場合（launch 引数とノード自身のログを調べます）。
+正常なチェック周期では何も出力しません -- `WATCHDOG_INTERVAL` ごとに 1 行出すと、
+本当に重要な行が埋もれてしまうからです。この行がないと、正しい再起動はカメラの
+ハードウェア故障と見分けがつきません。各再起動は `initial_reset:=true` を実行し、
+それ自体が USB 警告の束を出すため、なおさらです。
+
 **master 側マシン：** master を実行して購読します（任意の ROS 1 環境、例えば
 `ros_distro` 環境）：
 

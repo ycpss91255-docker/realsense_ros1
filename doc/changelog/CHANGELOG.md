@@ -8,6 +8,33 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- The watchdog now **says why it restarted** the camera node (refs #152). Every
+  watchdog-initiated relaunch prints one line to stderr naming the rule that
+  fired -- `trigger=deregistered` (the master answered and our node is gone,
+  i.e. master churn), `trigger=unreachable-debounce` (the master stopped
+  answering for the whole `WATCHDOG_FAILURES` window) or
+  `trigger=startup-deadline(<n>s)` (phase 1 never registered) -- together with
+  the probe state, the consecutive failure count against its limit
+  (`failures=3/3`), the uptime of that launch, how long since the node was last
+  seen registered, and how many restarts this container has done. A second line
+  prints when the node first registers after a (re)launch, pinning the recovery
+  time:
+
+  ```text
+  watchdog: restarting roslaunch -- trigger=deregistered state=deregistered failures=0/3 uptime=1020s last-registered=15s-ago restarts=7
+  watchdog: /camera/realsense2_camera registered after 30s (restarts=7)
+  ```
+
+  There is deliberately **no per-tick logging**: only the restart transition and
+  the first registration print, so a line every `WATCHDOG_INTERVAL` cannot bury
+  the ones that matter. Behaviour is unchanged -- same restart conditions, same
+  debounce, same timing -- and `_watchdog_decide` keeps its pure return contract;
+  the reason is a separate pure formatter whose output the loop routes to stderr.
+  Motivation: a remote master rebooting every 16-48 minutes produced 7 correct
+  `deregistered` restarts that read on the console as a camera respawning for no
+  reason (the USB warnings around each relaunch are `initial_reset:=true` doing
+  its job, not a cause), and establishing that cost hours of log archaeology
+  because the watchdog computed the reason and then discarded it.
 - Selectable librealsense **post-processing filter profile** via a new root
   `filters.yaml` symlink (refs #146), mirroring the existing `camera.yaml`
   camera-profile mechanism. Default target `config/realsense/filters/none.yaml`

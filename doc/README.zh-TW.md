@@ -270,6 +270,23 @@ WATCHDOG_ROSNODE=/camera/realsense2_camera  # 作為健康訊號的節點
 `roslaunch` 時生效；本機／未設定的 master 與其他指令維持不變。無論 watchdog 是否啟
 用，上述 `--wait` gate 仍會對遠端 master 自動生效。
 
+**每次 watchdog 重啟都會說明原因。** 重啟時會在 stderr 印出一行：觸發的規則、背後的
+探測狀態、連續失敗次數與其上限、該次 launch 的存活時間、距離上次看到節點註冊多久，
+以及這個容器已經重啟過幾次；節點重新註冊時再印一行：
+
+```text
+watchdog: restarting roslaunch -- trigger=deregistered state=deregistered failures=0/3 uptime=1020s last-registered=15s-ago restarts=7
+watchdog: /camera/realsense2_camera registered after 30s (restarts=7)
+```
+
+`trigger=deregistered` 表示 master 有回應但本節點不在名單上（master 重啟／churn，
+要查的是 master 而不是本機）；`trigger=unreachable-debounce` 表示 master 在整個
+`WATCHDOG_FAILURES` 窗口內都沒回應（要查網路或連線）；`trigger=startup-deadline(300s)`
+表示這次 launch 從未註冊成功（要查 launch 參數與節點自身的 log）。健康的檢查週期**不會**
+印任何東西 -- 每個 `WATCHDOG_INTERVAL` 印一行只會把真正重要的訊息淹沒。少了這些行，
+一次正確的重啟看起來就跟相機硬體故障一模一樣，尤其每次重啟都會跑 `initial_reset:=true`
+而自己產生一批 USB 警告。
+
 **在 master 機器上：** 跑 master 並訂閱（任何 ROS 1 環境皆可，例如 `ros_distro`
 環境）：
 

@@ -77,6 +77,17 @@ _resolve_argv() {
 # The decision is factored into two pure, exhaustively-testable functions --
 # `_watchdog_probe` (query -> state) and `_watchdog_decide` (state + counters ->
 # action) -- so the loop is a thin shell owning only the mutable state.
+#
+# Saying WHY it restarted (#152) is two more pure functions in the same shape,
+# `_watchdog_restart_reason` and `_watchdog_registered_notice`, whose output the
+# loop routes to stderr. The counters and the probe state used to be computed and
+# then discarded, so a correct restart left no evidence at all: a master rebooting
+# every 16-48 minutes produced 7 correct `deregistered` restarts that read as a
+# camera respawning for no reason, with the USB warnings of each fresh
+# `initial_reset:=true` on top -- an afternoon of log archaeology to reach a
+# conclusion one line already knew. Only the restart TRANSITION and the first
+# registration after a (re)launch print; a line on every WATCHDOG_INTERVAL tick
+# would bury exactly the signal this exists to surface.
 
 # Config env vars (all overridable via .env), with defaults:
 #   WATCHDOG_ENABLED           off by default; "1" enables (opt-in, consistent
@@ -194,6 +205,83 @@ _watchdog_decide() {
   fi
 }
 
+# PURE formatter (#152): the ONE line the watchdog logs when it restarts the
+# child, echoed on stdout like every other decision function here -- the loop
+# owns the routing to stderr. Prints NOTHING for any verdict but RESTART, so
+# "never log per tick" is a property of this function rather than a rule its
+# caller has to remember.
+# Usage:
+#   _watchdog_restart_reason <action> <state> <registered_once> <failures> \
+#     <elapsed> <max_failures> <startup_deadline> <last_registered> <restarts>
+# `last_registered` is the `elapsed` of the most recent healthy tick, or -1 when
+# the node was never seen; `restarts` counts this restart.
+# The line names the RULE that fired, not just the probe state, because the three
+# restart paths have different causes and different fixes:
+#   deregistered           the master answered and our node is gone -- master
+#                          churn, look at the master, not at this host
+#   unreachable-debounce   the master stopped answering for the whole debounce
+#                          window -- look at the network / link
+#   startup-deadline(Ns)   phase 1 never registered within the backstop -- look
+#                          at the launch args and the node's own log
+_watchdog_restart_reason() {
+  local action="$1"
+  local state="$2"
+  local registered_once="$3"
+  local failures="$4"
+  local elapsed="$5"
+  local max_failures="$6"
+  local startup_deadline="$7"
+  local last_registered="$8"
+  local restarts="$9"
+
+  [[ "${action}" == "RESTART" ]] || return 0
+
+  # Derived from the same inputs _watchdog_decide branched on: phase 1 can only
+  # restart on the startup backstop; phase 2 restarts immediately on
+  # `deregistered`, otherwise at the end of the `unreachable` debounce.
+  local trigger
+  local consecutive="${failures}"
+  if (( registered_once == 0 )); then
+    trigger="startup-deadline(${startup_deadline}s)"
+  elif [[ "${state}" == "deregistered" ]]; then
+    trigger="deregistered"
+  else
+    trigger="unreachable-debounce"
+    # The loop bumps the counter only on a WAIT, so this restarting tick is the
+    # failures+1th consecutive miss -- report it the way an operator counts it,
+    # against the limit it just reached.
+    consecutive=$((failures + 1))
+  fi
+
+  local seen="never"
+  if (( last_registered >= 0 )); then
+    seen="$((elapsed - last_registered))s-ago"
+  fi
+
+  # Two printfs, ONE line: keeps the source inside 80 columns.
+  printf 'watchdog: restarting roslaunch -- trigger=%s state=%s ' \
+    "${trigger}" "${state}"
+  printf 'failures=%s/%s uptime=%ss last-registered=%s restarts=%s\n' \
+    "${consecutive}" "${max_failures}" "${elapsed}" "${seen}" "${restarts}"
+}
+
+# PURE formatter (#152), the other half of the restart story: the node coming
+# back. Prints only on the FIRST sighting since this (re)launch (registered_once
+# still 0) and nothing on any later healthy tick, so it pins how long recovery
+# took without turning the steady state into a log stream.
+# Usage: _watchdog_registered_notice <registered_once> <node> <elapsed> <restarts>
+_watchdog_registered_notice() {
+  local registered_once="$1"
+  local node="$2"
+  local elapsed="$3"
+  local restarts="$4"
+
+  (( registered_once == 0 )) || return 0
+
+  printf 'watchdog: %s registered after %ss (restarts=%s)\n' \
+    "${node}" "${elapsed}" "${restarts}"
+}
+
 # PID of the current roslaunch child, shared with the signal-forwarding trap.
 _WATCHDOG_CHILD_PID=""
 
@@ -231,15 +319,23 @@ _watchdog_loop() {
 
   trap _watchdog_forward_signal TERM INT
 
+  # Relaunch counter for this container's lifetime, reported by the restart line
+  # (#152). EVERY relaunch bumps it, including a child that exited on its own, so
+  # a gap in the numbers between two logged restart lines is exactly that case.
+  local restarts=0
+
   while true; do
     roslaunch --wait "${@:2}" &
     _WATCHDOG_CHILD_PID="$!"
 
     # Per-launch state, owned here and reset on every (re)launch: have we ever
-    # registered, the phase-2 blip counter, and seconds elapsed since launch.
+    # registered, the phase-2 blip counter, seconds elapsed since launch, and the
+    # `elapsed` of the most recent healthy tick (-1 = never seen), which is what
+    # the restart line reports as `last-registered`.
     local registered_once=0
     local failures=0
     local elapsed=0
+    local last_registered=-1
     while true; do
       # Sleep as a backgrounded child + `wait` so a signal arriving mid-sleep
       # runs the trap promptly (a foreground `sleep` would block the trap until
@@ -251,6 +347,7 @@ _watchdog_loop() {
       # roslaunch exited on its own -> reap and relaunch.
       if ! kill -0 "${_WATCHDOG_CHILD_PID}" 2>/dev/null; then
         wait "${_WATCHDOG_CHILD_PID}" 2>/dev/null || true
+        restarts=$((restarts + 1))
         break
       fi
 
@@ -264,11 +361,24 @@ _watchdog_loop() {
       case "${action}" in
         HEALTHY)
           # Node is present -> we are in (or entering) phase 2; clear the blip
-          # counter so a later transient does not carry stale failures.
+          # counter so a later transient does not carry stale failures, and
+          # remember this tick as the last time we saw it registered.
+          # The notice owns its own once-per-launch guard, so this call site
+          # cannot accidentally turn into a per-tick log line.
+          _watchdog_registered_notice "${registered_once}" "${node}" \
+            "${elapsed}" "${restarts}" >&2
           registered_once=1
           failures=0
+          last_registered="${elapsed}"
           ;;
         RESTART)
+          # Say WHY before killing the child (#152). The verdict, the probe state
+          # and the counters exist only here; without this line a correct restart
+          # is indistinguishable from failing camera hardware.
+          restarts=$((restarts + 1))
+          _watchdog_restart_reason "${action}" "${state}" "${registered_once}" \
+            "${failures}" "${elapsed}" "${max_failures}" \
+            "${startup_deadline}" "${last_registered}" "${restarts}" >&2
           # SIGTERM, not SIGINT: the child was started async (`&`), so its SIGINT
           # is SIG_IGN (POSIX) and signalling it SIGINT would hang the next
           # `wait`. The fresh `--wait` re-waits + re-registers on relaunch.
