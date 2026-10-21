@@ -35,7 +35,6 @@ jobs:
     with:
       image_name: realsense_ros1
       platforms: linux/amd64,linux/arm64
-      test_tools_version: v0.41.0
       # LIBREALSENSE_IMAGE points CI at the prebuilt SDK published by
       # build-librealsense.yaml, so buildx PULLS it instead of recompiling
       # librealsense (~15-25 min) per run. The SDK is a pure C++ library whose
